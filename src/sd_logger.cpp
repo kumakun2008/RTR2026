@@ -5,6 +5,8 @@
  * @date 2026-06-24
  */
 
+#ifdef ESP32
+
 #include "sd_logger.hpp"
 #include <esp_heap_caps.h>
 
@@ -39,17 +41,14 @@ bool SDLogger::begin(int csPin, SPIClass& spi, uint32_t spiSpeed) {
     _csPin = csPin;
     _spi = &spi;
     
-    // 1. Create buffer mutex
     _bufferMutex = xSemaphoreCreateMutex();
     if (_bufferMutex == NULL) {
         return false;
     }
     
-    // 2. Allocate ping-pong buffers in DMA-capable RAM (SRAM)
     _bufferA = (uint8_t*)heap_caps_malloc(BUFFER_SIZE, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
     _bufferB = (uint8_t*)heap_caps_malloc(BUFFER_SIZE, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
     
-    // Fallback to standard heap if DMA caps allocation fails
     if (_bufferA == NULL) _bufferA = (uint8_t*)malloc(BUFFER_SIZE);
     if (_bufferB == NULL) _bufferB = (uint8_t*)malloc(BUFFER_SIZE);
     
@@ -62,17 +61,13 @@ bool SDLogger::begin(int csPin, SPIClass& spi, uint32_t spiSpeed) {
     _activeSize = 0;
     _inactiveSize = 0;
     
-    // 3. Initialize SD card interface
     if (SD.begin(_csPin, *_spi, spiSpeed)) {
         _cardMounted = true;
         rotateLogFile();
     } else {
-        // Warning: Card not inserted or SPI fault. We will operate in buffered/discard mode.
         _cardMounted = false;
     }
     
-    // 4. Create background SD write task pinned to Core 0 (PRO_CPU)
-    // Priority set to 2 (Medium priority, above idle and bluetooth SPP telemetry)
     BaseType_t result = xTaskCreatePinnedToCore(
         writeTask,
         "SDWriteTask",
@@ -80,7 +75,7 @@ bool SDLogger::begin(int csPin, SPIClass& spi, uint32_t spiSpeed) {
         this,
         2,
         &_writeTaskHandle,
-        0 // Core 0
+        0
     );
     
     return (result == pdPASS);
@@ -88,15 +83,13 @@ bool SDLogger::begin(int csPin, SPIClass& spi, uint32_t spiSpeed) {
 
 bool SDLogger::logPacket(uint8_t sensorId, const void* payload, size_t payloadLen, uint64_t timestamp) {
     size_t packetSize = sizeof(LogHeader) + payloadLen + sizeof(LogFooter);
-    if (packetSize > BUFFER_SIZE) return false; // Packet too large for buffer
+    if (packetSize > BUFFER_SIZE) return false;
     
     if (xSemaphoreTake(_bufferMutex, pdMS_TO_TICKS(10)) != pdTRUE) {
-        return false; // Mutex acquisition timeout
+        return false;
     }
     
-    // Check if packet fits in the active buffer
     if (_activeSize + packetSize > BUFFER_SIZE) {
-        // Swap buffers if inactive buffer is empty (written to SD)
         if (_inactiveSize == 0) {
             uint8_t* temp = _activeBuffer;
             _activeBuffer = _inactiveBuffer;
@@ -105,18 +98,15 @@ bool SDLogger::logPacket(uint8_t sensorId, const void* payload, size_t payloadLe
             _inactiveSize = _activeSize;
             _activeSize = 0;
             
-            // Notify background task to write to SD
             if (_writeTaskHandle != NULL) {
                 xTaskNotifyGive(_writeTaskHandle);
             }
         } else {
-            // Buffer overflow - SD write task is lagging (e.g. SD card busy write latency)
             xSemaphoreGive(_bufferMutex);
             return false;
         }
     }
     
-    // Assemble packet in the active buffer
     LogHeader header;
     header.sync = LOG_SYNC_WORD;
     header.timestamp = timestamp;
@@ -124,24 +114,17 @@ bool SDLogger::logPacket(uint8_t sensorId, const void* payload, size_t payloadLe
     header.length = (uint8_t)payloadLen;
     
     uint8_t* dst = _activeBuffer + _activeSize;
-    
-    // 1. Copy Header
     memcpy(dst, &header, sizeof(LogHeader));
     
-    // 2. Copy Payload
     if (payloadLen > 0 && payload != NULL) {
         memcpy(dst + sizeof(LogHeader), payload, payloadLen);
     }
     
-    // 3. Compute CRC over Header + Payload
     uint16_t crcVal = calculateCRC16(dst, sizeof(LogHeader) + payloadLen);
     LogFooter footer;
     footer.crc16 = crcVal;
     
-    // 4. Copy Footer
     memcpy(dst + sizeof(LogHeader) + payloadLen, &footer, sizeof(LogFooter));
-    
-    // 5. Update write pointer size
     _activeSize += packetSize;
     
     xSemaphoreGive(_bufferMutex);
@@ -169,7 +152,6 @@ void SDLogger::triggerSync() {
 void SDLogger::rotateLogFile() {
     if (!_cardMounted) return;
     
-    // Scan root directory for next log_XXXX.bin file index
     int fileIdx = 1;
     for (; fileIdx <= 9999; fileIdx++) {
         snprintf(_fileName, sizeof(_fileName), "/log_%04d.bin", fileIdx);
@@ -189,28 +171,23 @@ void SDLogger::rotateLogFile() {
 void SDLogger::writeTask(void* pvParameters) {
     SDLogger* logger = (SDLogger*)pvParameters;
     while (true) {
-        // Wait for buffer swap signal
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
         logger->handleWrite();
     }
 }
 
 void SDLogger::handleWrite() {
-    // Check if we have data to write
     if (_inactiveSize == 0) return;
     
-    // Write data to SD Card (we do not hold the mutex here to allow logPacket to write to _activeBuffer)
     if (_cardMounted && _fileOpen) {
         size_t written = _logFile.write(_inactiveBuffer, _inactiveSize);
         if (written == _inactiveSize) {
-            _logFile.flush(); // Commit write to flash memory
+            _logFile.flush();
         } else {
-            // Write error occurred, try to re-mount card or handle write error
             _fileOpen = false;
         }
     }
     
-    // Clear the inactive size under mutex lock
     if (xSemaphoreTake(_bufferMutex, portMAX_DELAY) == pdTRUE) {
         _inactiveSize = 0;
         xSemaphoreGive(_bufferMutex);
@@ -231,3 +208,5 @@ uint16_t SDLogger::calculateCRC16(const uint8_t* data, size_t length) {
     }
     return crc;
 }
+
+#endif // ESP32

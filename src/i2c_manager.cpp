@@ -1,6 +1,7 @@
 /**
  * @file i2c_manager.cpp
  * @brief Thread-safe I2C bus wrapper implementation.
+ * Cross-platform compatible for ESP32 and STM32.
  * @author Team ЯTR
  * @date 2026-06-24
  */
@@ -11,29 +12,43 @@ I2CManager::I2CManager(TwoWire& wire, int sda, int scl, uint32_t speed)
     : _wire(wire), _sdaPin(sda), _sclPin(scl), _speed(speed), _mutex(NULL) {}
 
 I2CManager::~I2CManager() {
+#ifdef ESP32
     if (_mutex != NULL) {
         vSemaphoreDelete(_mutex);
     }
+#endif
 }
 
 bool I2CManager::begin() {
+#ifdef ESP32
     _mutex = xSemaphoreCreateMutex();
     if (_mutex == NULL) {
         return false;
     }
     _wire.begin(_sdaPin, _sclPin, _speed);
+#else
+    // For STM32 or other standard Arduino architectures
+    _wire.begin();
+    _wire.setClock(_speed);
+#endif
     return true;
 }
 
 bool I2CManager::lock(TickType_t waitTicks) {
+#ifdef ESP32
     if (_mutex == NULL) return false;
     return xSemaphoreTake(_mutex, waitTicks) == pdTRUE;
+#else
+    return true; // No-op lock on single threaded environments
+#endif
 }
 
 void I2CManager::unlock() {
+#ifdef ESP32
     if (_mutex != NULL) {
         xSemaphoreGive(_mutex);
     }
+#endif
 }
 
 bool I2CManager::writeRegister(uint8_t devAddr, uint8_t regAddr, uint8_t data) {
@@ -126,7 +141,11 @@ bool I2CManager::readAfterCommand16(uint8_t devAddr, uint16_t command, uint8_t* 
     }
     
     if (delayMs > 0) {
+#ifdef ESP32
         vTaskDelay(pdMS_TO_TICKS(delayMs));
+#else
+        delay(delayMs);
+#endif
     }
     
     size_t requested = _wire.requestFrom(devAddr, (uint8_t)size);
@@ -149,20 +168,23 @@ bool I2CManager::readAfterCommand16(uint8_t devAddr, uint16_t command, uint8_t* 
 }
 
 void I2CManager::recoverBus() {
-    // Attempt to lock first, but force recovery even if locked to prevent permanent hang
-    bool locked = lock(pdMS_TO_TICKS(10));
+    bool locked = lock(10);
     
     // 1. Terminate current wire peripheral
     _wire.end();
     
     // 2. Configure SCL and SDA as GPIOs with internal pullups
-    pinMode(_sclPin, OUTPUT_OPEN_DRAIN);
+#ifdef INPUT_PULLUP
     pinMode(_sdaPin, INPUT_PULLUP);
+#else
+    pinMode(_sdaPin, INPUT);
+#endif
+    pinMode(_sclPin, OUTPUT);
     
     digitalWrite(_sclPin, HIGH);
     delayMicroseconds(5);
     
-    // 3. If SDA is held low by a slave, cycle SCL to release the bus
+    // 3. Cycle SCL if SDA is held low
     if (digitalRead(_sdaPin) == LOW) {
         for (int i = 0; i < 9; i++) {
             digitalWrite(_sclPin, LOW);
@@ -170,15 +192,14 @@ void I2CManager::recoverBus() {
             digitalWrite(_sclPin, HIGH);
             delayMicroseconds(5);
             
-            // Check if slave released SDA
             if (digitalRead(_sdaPin) == HIGH) {
                 break;
             }
         }
     }
     
-    // 4. Force a STOP condition (SDA transitioning low-to-high while SCL is high)
-    pinMode(_sdaPin, OUTPUT_OPEN_DRAIN);
+    // 4. Force a STOP condition
+    pinMode(_sdaPin, OUTPUT);
     digitalWrite(_sdaPin, LOW);
     delayMicroseconds(5);
     digitalWrite(_sclPin, HIGH);
@@ -187,7 +208,12 @@ void I2CManager::recoverBus() {
     delayMicroseconds(5);
     
     // 5. Reinitialize I2C wire peripheral
+#ifdef ESP32
     _wire.begin(_sdaPin, _sclPin, _speed);
+#else
+    _wire.begin();
+    _wire.setClock(_speed);
+#endif
     
     if (locked) {
         unlock();

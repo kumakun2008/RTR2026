@@ -1,11 +1,13 @@
 /**
  * @file can_manager.cpp
- * @brief ESP32 native TWAI (CAN) bus driver manager implementation.
+ * @brief TWAI (CAN) bus driver manager implementation with cross-platform stubs.
  * @author Team ЯTR
  * @date 2026-06-24
  */
 
 #include "can_manager.hpp"
+
+#ifdef ESP32
 
 CANManager::CANManager() : _initialized(false) {}
 
@@ -16,25 +18,19 @@ CANManager::~CANManager() {
 bool CANManager::begin(int txPin, int rxPin) {
     if (_initialized) return true;
     
-    // Configure TWAI general parameters: Normal mode, standard ID (11-bit)
     twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(
         (gpio_num_t)txPin, 
         (gpio_num_t)rxPin, 
         TWAI_MODE_NORMAL
     );
     
-    // Configure TWAI timing for 1 Mbps
     twai_timing_config_t t_config = TWAI_TIMING_CONFIG_1MBITS();
-    
-    // Accept all message IDs (filtering done in application layer if necessary)
     twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
     
-    // Install driver
     if (twai_driver_install(&g_config, &t_config, &f_config) != ESP_OK) {
         return false;
     }
     
-    // Start driver
     if (twai_start() != ESP_OK) {
         twai_driver_uninstall();
         return false;
@@ -57,8 +53,8 @@ bool CANManager::transmitRaw(uint32_t id, const uint8_t* data, uint8_t dlc) {
     
     twai_message_t msg;
     msg.identifier = id;
-    msg.extd = 0; // Standard 11-bit format
-    msg.rtr = 0;  // Data frame
+    msg.extd = 0; 
+    msg.rtr = 0;  
     msg.data_length_code = dlc > 8 ? 8 : dlc;
     
     if (dlc > 0 && data != NULL) {
@@ -67,7 +63,6 @@ bool CANManager::transmitRaw(uint32_t id, const uint8_t* data, uint8_t dlc) {
         }
     }
     
-    // Transmit message with 10ms timeout
     return (twai_transmit(&msg, pdMS_TO_TICKS(10)) == ESP_OK);
 }
 
@@ -167,3 +162,20 @@ bool CANManager::transmitBattery(float busVolt, float currentAmp) {
 bool CANManager::transmitCalibZero() {
     return transmitRaw(CAN_MSG_CMD_CALIB_ZERO, NULL, 0);
 }
+
+#else // Non-ESP32 Mock implementations (STM32 stubs)
+
+CANManager::CANManager() : _initialized(false) {}
+CANManager::~CANManager() {}
+bool CANManager::begin(int txPin, int rxPin) { _initialized = true; return true; }
+void CANManager::end() { _initialized = false; }
+bool CANManager::transmitRaw(uint32_t id, const uint8_t* data, uint8_t dlc) { return true; }
+bool CANManager::receiveRaw(uint32_t& id, uint8_t* data, uint8_t& dlc, uint32_t timeoutMs) { return false; }
+bool CANManager::transmitAccel(float ax, float ay, float az) { return true; }
+bool CANManager::transmitGyro(float gx, float gy, float gz) { return true; }
+bool CANManager::transmitMag(float mx, float my, float mz) { return true; }
+bool CANManager::transmitBaro(float pressPa, float tempC) { return true; }
+bool CANManager::transmitBattery(float busVolt, float currentAmp) { return true; }
+bool CANManager::transmitCalibZero() { return true; }
+
+#endif // ESP32

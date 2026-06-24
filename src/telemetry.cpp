@@ -5,6 +5,8 @@
  * @date 2026-06-24
  */
 
+#ifdef ESP32
+
 #include "telemetry.hpp"
 #include <algorithm>
 
@@ -49,7 +51,7 @@ void Telemetry::process() {
             if (_rxIdx < (int)sizeof(_rxBuffer) - 1) {
                 _rxBuffer[_rxIdx++] = c;
             } else {
-                _rxIdx = 0; // Buffer overflow, reset
+                _rxIdx = 0;
             }
         }
     }
@@ -75,29 +77,17 @@ void Telemetry::parseCommand(const char* cmd) {
 }
 
 void Telemetry::startOTAServer() {
-    // 1. Terminate Bluetooth SPP to free radio peripheral resources
     if (_bluetoothActive) {
         _serialBT.end();
         _bluetoothActive = false;
     }
     
-    // 2. Setup WiFi in Access Point mode
     WiFi.mode(WIFI_AP);
     WiFi.softAP("RTR_Glider_OTA_AP", "rtr2026glider");
     
-    // 3. Setup OTA endpoints
-    ArduinoOTA.onStart([]() {
-        // Shutdown critical subsystems if needed
-    });
-    
-    ArduinoOTA.onEnd([]() {
-        ESP.restart(); // Reboot on successful flash
-    });
-    
-    ArduinoOTA.onError([](ota_error_t error) {
-        ESP.restart(); // Reboot on flash failure to return to normal firmware
-    });
-    
+    ArduinoOTA.onStart([]() {});
+    ArduinoOTA.onEnd([]() { ESP.restart(); });
+    ArduinoOTA.onError([](ota_error_t error) { ESP.restart(); });
     ArduinoOTA.begin();
     
     _otaActive = true;
@@ -109,9 +99,8 @@ void Telemetry::handleOTA() {
     
     ArduinoOTA.handle();
     
-    // Auto-timeout after 5 minutes of inactivity (no update started)
     if (millis() - _otaTimeoutStart > 300000) {
-        ESP.restart(); // Reboot back to normal telemetry mode
+        ESP.restart();
     }
 }
 
@@ -119,23 +108,17 @@ float Telemetry::calculateCalibZeroIQR(float* samples, size_t count) {
     if (count == 0) return 0.0f;
     if (count == 1) return samples[0];
     
-    // 1. Sort samples in ascending order
     std::sort(samples, samples + count);
     
-    // 2. Compute Q1 (25th percentile) and Q3 (75th percentile)
     size_t q1Idx = count / 4;
     size_t q3Idx = (3 * count) / 4;
     float q1 = samples[q1Idx];
     float q3 = samples[q3Idx];
-    
-    // 3. Calculate Interquartile Range (IQR)
     float iqr = q3 - q1;
     
-    // 4. Determine boundaries for normal distribution range (IQR factor = 1.5)
     float lowerBound = q1 - 1.5f * iqr;
     float upperBound = q3 + 1.5f * iqr;
     
-    // 5. Average values within the normal boundaries (excluding outliers)
     double sum = 0.0;
     size_t validCount = 0;
     
@@ -149,3 +132,13 @@ float Telemetry::calculateCalibZeroIQR(float* samples, size_t count) {
     if (validCount == 0) return 0.0f;
     return (float)(sum / validCount);
 }
+
+void Telemetry::registerCalibCallback(void (*callback)()) {
+    _calibCallback = callback;
+}
+
+void Telemetry::registerOTACallback(void (*callback)()) {
+    _otaCallback = callback;
+}
+
+#endif // ESP32

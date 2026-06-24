@@ -1,6 +1,7 @@
 /**
  * @file i2c_manager.hpp
  * @brief Thread-safe I2C bus wrapper with automated hardware bus recovery.
+ * Compatible with ESP32 and non-ESP32 (STM32) architectures.
  * @author Team ЯTR
  * @date 2026-06-24
  */
@@ -10,8 +11,16 @@
 
 #include <Arduino.h>
 #include <Wire.h>
+
+#ifdef ESP32
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
+#else
+// Type stub for non-FreeRTOS (STM32/other) environments
+typedef void* SemaphoreHandle_t;
+#define TickType_t uint32_t
+#define pdMS_TO_TICKS(ms) (ms)
+#endif
 
 /**
  * @class I2CManager
@@ -21,10 +30,10 @@ class I2CManager {
 public:
     /**
      * @brief Construct a new I2CManager instance.
-     * @param wire Reference to the Arduino TwoWire instance (e.g. Wire).
+     * @param wire Reference to the Arduino TwoWire instance.
      * @param sda Pin number for I2C Serial Data line.
      * @param scl Pin number for I2C Serial Clock line.
-     * @param speed Bus frequency in Hz (e.g., 400000 for Fast Mode).
+     * @param speed Bus frequency in Hz (default 400kHz).
      */
     I2CManager(TwoWire& wire, int sda, int scl, uint32_t speed = 400000);
 
@@ -78,7 +87,6 @@ public:
 
     /**
      * @brief Transmit a 16-bit command and then read responses after an optional delay.
-     * Useful for SDP3x and SHT4x sensors.
      * @param devAddr Device address.
      * @param command 16-bit command.
      * @param data Buffer to store read bytes.
@@ -104,7 +112,7 @@ private:
     /**
      * @brief Internal lock helper.
      */
-    bool lock(TickType_t waitTicks = pdMS_TO_TICKS(100));
+    bool lock(TickType_t waitTicks = 100);
 
     /**
      * @brief Internal unlock helper.
