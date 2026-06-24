@@ -34,7 +34,9 @@ public:
      */
     void begin() {
         pinMode(_pin, INPUT);
+#ifdef ESP32
         analogSetPinAttenuation(_pin, ADC_11db); // Configure for ~3.3V max input voltage
+#endif
     }
 
     /**

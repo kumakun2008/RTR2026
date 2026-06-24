@@ -1,6 +1,6 @@
 /**
  * @file time_sync.cpp
- * @brief High-precision UTC clock synchronization implementation.
+ * @brief High-precision UTC clock synchronization and GPS NMEA parsing implementation.
  * @author Team ЯTR
  * @date 2026-06-24
  */
@@ -15,6 +15,9 @@ volatile uint64_t TimeSync::_lastPPSUs = 0;
 volatile uint64_t TimeSync::_utcOffsetUs = 0;
 volatile bool TimeSync::_ppsTriggered = false;
 SemaphoreHandle_t TimeSync::_timeMutex = NULL;
+
+GPSPayload TimeSync::_latestGPSData = { 0.0, 0.0, 0.0f, 0.0f, 0, 0, 0 };
+volatile bool TimeSync::_hasFreshGPS = false;
 
 TimeSync::TimeSync()
     : _gpsSerial(NULL), _ppsPin(-1), _rxPin(-1), _txPin(-1),
@@ -73,6 +76,17 @@ uint64_t TimeSync::getAbsoluteTimeUs() {
     return esp_timer_get_time() + offset;
 }
 
+bool TimeSync::getGPSData(GPSPayload& payload) {
+    bool fresh = false;
+    if (_timeMutex != NULL && xSemaphoreTake(_timeMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+        payload = _latestGPSData;
+        fresh = _hasFreshGPS;
+        _hasFreshGPS = false; // Reset read flag
+        xSemaphoreGive(_timeMutex);
+    }
+    return fresh;
+}
+
 void TimeSync::gpsParseTask(void* pvParameters) {
     TimeSync* sync = (TimeSync*)pvParameters;
     char buffer[128];
@@ -100,42 +114,122 @@ void TimeSync::gpsParseTask(void* pvParameters) {
 }
 
 void TimeSync::parseNMEA(const char* sentence) {
-    if (strncmp(sentence, "$GPRMC", 6) != 0 && strncmp(sentence, "$GNRMC", 6) != 0) {
-        return;
-    }
-    
-    char temp[128];
-    strncpy(temp, sentence, sizeof(temp));
-    temp[sizeof(temp) - 1] = '\0';
-    
-    char* fields[20];
-    int fieldCount = 0;
-    char* token = strtok(temp, ",");
-    
-    while (token != NULL && fieldCount < 20) {
-        fields[fieldCount++] = token;
-        token = strtok(NULL, ",");
-    }
-    
-    if (fieldCount < 10) return;
-    
-    const char* status = fields[2];
-    if (status[0] != 'A') return;
-    
-    const char* timeStr = fields[1];
-    const char* dateStr = fields[9];
-    
-    if (_ppsTriggered) {
-        uint64_t utcEpochUs = convertNMEAToEpochUs(timeStr, dateStr);
-        if (utcEpochUs > 0) {
-            if (xSemaphoreTake(_timeMutex, portMAX_DELAY) == pdTRUE) {
-                _utcOffsetUs = utcEpochUs - _lastPPSUs;
-                _synced = true;
-                xSemaphoreGive(_timeMutex);
-            }
+    // 1. Parse GPRMC / GNRMC (Recommended Minimum Navigation Information)
+    if (strncmp(sentence, "$GPRMC", 6) == 0 || strncmp(sentence, "$GNRMC", 6) == 0) {
+        char temp[128];
+        strncpy(temp, sentence, sizeof(temp));
+        temp[sizeof(temp)-1] = '\0';
+        
+        char* fields[20];
+        int fieldCount = 0;
+        char* token = strtok(temp, ",");
+        while (token != NULL && fieldCount < 20) {
+            fields[fieldCount++] = token;
+            token = strtok(NULL, ",");
         }
-        _ppsTriggered = false;
+        
+        if (fieldCount < 10) return;
+        if (fields[2][0] != 'A') return; // Status: A=active, V=void
+        
+        const char* timeStr = fields[1];
+        const char* latStr = fields[3];
+        const char* latDir = fields[4];
+        const char* lonStr = fields[5];
+        const char* lonDir = fields[6];
+        const char* speedKnotsStr = fields[7];
+        const char* courseStr = fields[8];
+        const char* dateStr = fields[9];
+        
+        double latVal = parseDegrees(latStr, latDir);
+        double lonVal = parseDegrees(lonStr, lonDir);
+        float speedMs = atof(speedKnotsStr) * 0.514444f; // knots to m/s
+        float headingDeg = atof(courseStr);
+        
+        // Update UTC clock offset using PPS interrupt sync
+        if (_ppsTriggered) {
+            uint64_t utcEpochUs = convertNMEAToEpochUs(timeStr, dateStr);
+            if (utcEpochUs > 0) {
+                if (xSemaphoreTake(_timeMutex, portMAX_DELAY) == pdTRUE) {
+                    _utcOffsetUs = utcEpochUs - _lastPPSUs;
+                    _synced = true;
+                    xSemaphoreGive(_timeMutex);
+                }
+            }
+            _ppsTriggered = false;
+        }
+        
+        // Update cache
+        if (xSemaphoreTake(_timeMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+            _latestGPSData.latitude = latVal;
+            _latestGPSData.longitude = lonVal;
+            _latestGPSData.speed = speedMs;
+            _latestGPSData.heading = (uint16_t)(headingDeg * 100.0f);
+            _hasFreshGPS = true;
+            xSemaphoreGive(_timeMutex);
+        }
     }
+    // 2. Parse GPGGA / GNGGA (Global Positioning System Fix Data)
+    else if (strncmp(sentence, "$GPGGA", 6) == 0 || strncmp(sentence, "$GNGGA", 6) == 0) {
+        char temp[128];
+        strncpy(temp, sentence, sizeof(temp));
+        temp[sizeof(temp)-1] = '\0';
+        
+        char* fields[20];
+        int fieldCount = 0;
+        char* token = strtok(temp, ",");
+        while (token != NULL && fieldCount < 20) {
+            fields[fieldCount++] = token;
+            token = strtok(NULL, ",");
+        }
+        
+        if (fieldCount < 10) return;
+        
+        const char* fixQualStr = fields[6];
+        const char* satCountStr = fields[7];
+        const char* altStr = fields[9];
+        
+        uint8_t fixQual = atoi(fixQualStr);
+        uint8_t satCount = atoi(satCountStr);
+        float altMeters = atof(altStr);
+        
+        if (xSemaphoreTake(_timeMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+            _latestGPSData.fix_status = fixQual;
+            _latestGPSData.sat_count = satCount;
+            _latestGPSData.altitude = altMeters;
+            _hasFreshGPS = true;
+            xSemaphoreGive(_timeMutex);
+        }
+    }
+}
+
+double TimeSync::parseDegrees(const char* val, const char* dir) {
+    if (strlen(val) < 5) return 0.0;
+    
+    // Find decimal point
+    const char* dot = strchr(val, '.');
+    if (dot == NULL) return 0.0;
+    
+    // Minute starts 2 chars before dot
+    int minStartIdx = (dot - val) - 2;
+    if (minStartIdx < 0) return 0.0;
+    
+    char degBuf[8];
+    char minBuf[10];
+    
+    strncpy(degBuf, val, minStartIdx);
+    degBuf[minStartIdx] = '\0';
+    strcpy(minBuf, val + minStartIdx);
+    
+    double deg = atof(degBuf);
+    double min = atof(minBuf);
+    
+    double decDeg = deg + (min / 60.0);
+    
+    if (dir[0] == 'S' || dir[0] == 'W') {
+        decDeg = -decDeg;
+    }
+    
+    return decDeg;
 }
 
 uint64_t TimeSync::convertNMEAToEpochUs(const char* timeStr, const char* dateStr) {
