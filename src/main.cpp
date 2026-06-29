@@ -73,11 +73,14 @@
 #endif
 
 #else
-// STM32 specific pins (Bluepill configuration)
-#define I2C_SDA_PIN PB7
-#define I2C_SCL_PIN PB6
-#define CAN_TX_PIN   PA12
+// STM32 specific pins (Rudder Board configuration)
+#define I2C_SDA_PIN PA14
+#define I2C_SCL_PIN PA15
+// Note: CAN RX/TX mapped to PA11/PA12. Schematic maps to PA2/PA3, which lacks CAN functionality.
+// Requires hardware jumper rework (PA2->PA11, PA3->PA12) to allow CAN communication.
 #define CAN_RX_PIN   PA11
+#define CAN_TX_PIN   PA12
+#define LED_PIN      PA4
 #endif
 
 // ==========================================
