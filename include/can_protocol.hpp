@@ -2,7 +2,7 @@
  * @file can_protocol.hpp
  * @brief Common CAN communication protocol definitions, message IDs, and scaling factors.
  * @author Team ЯTR
- * @date 2026-06-24
+ * @date 2026-06-25
  */
 
 #ifndef CAN_PROTOCOL_HPP
@@ -23,52 +23,39 @@ enum CANNodeID : uint8_t {
     CAN_NODE_RUDDER    = 0x07  ///< Rudder angle board
 };
 
-/**
- * @brief CAN Message Identifiers.
- */
-enum CANMessageID : uint32_t {
-    // Command Messages (Broadcast / Unicast)
-    CAN_MSG_CMD_CALIB_ZERO = 0x010, ///< Command: Trigger Zero Calibration (payload: empty)
-    CAN_MSG_CMD_OTA_START  = 0x011, ///< Command: Start OTA (payload: empty)
-    
-    // Main Board Telemetry (0x100 - 0x11F)
-    CAN_MSG_MAIN_IMU_ACCEL = 0x100, ///< IMU Acceleration: Accel X, Y, Z (int16_t x3, scale 1000)
-    CAN_MSG_MAIN_IMU_GYRO  = 0x101, ///< IMU Gyroscope: Gyro X, Y, Z (int16_t x3, scale 100)
-    CAN_MSG_MAIN_MAG       = 0x102, ///< Magnetometer: Mag X, Y, Z (int16_t x3, scale 10)
-    CAN_MSG_MAIN_ENV       = 0x103, ///< Environment: Pressure (int32_t, scale 100), Temp (int16_t, scale 100)
-    CAN_MSG_MAIN_BATTERY   = 0x104, ///< Battery voltage: Voltage (uint16_t, scale 1000), Current (int16_t, scale 1000)
+// ==========================================
+// NEW CAN ID ASSIGNMENTS (1Mbps / Standard 11-bit)
+// ==========================================
 
-    // Pitot Board Telemetry (0x120 - 0x13F)
-    CAN_MSG_PITOT_PRESSURES = 0x120, ///< SDP32, SDP31_1, SDP31_2 Pressures (int32_t x3, scale 100)
-    CAN_MSG_PITOT_IMU       = 0x121, ///< Pitot IMU (BNO055) Euler Angles: Roll, Pitch, Yaw (int16_t x3, scale 100)
-    CAN_MSG_PITOT_ENV       = 0x122, ///< Pitot SHT41 Temp (int16_t, scale 100), Humidity (uint16_t, scale 100)
+// [High Priority] Flight Control & Safety
+constexpr uint32_t CAN_ID_ATTITUDE      = 0x010; ///< Pitch (float) + Roll (float) [Source: Main / Rudder]
+constexpr uint32_t CAN_ID_AIRSPEED      = 0x011; ///< SDP32 press (float) + Airspeed (float) [Source: Pitot]
+constexpr uint32_t CAN_ID_RUDDER_ANGLE  = 0x012; ///< Rudder angle (float) [Source: Rudder]
 
-    // GPS Board Telemetry (0x140 - 0x15F)
-    CAN_MSG_GPS_POS_LAT_LON = 0x140, ///< GPS Latitude (int32_t, scale 10,000,000), Longitude (int32_t, scale 10,000,000)
-    CAN_MSG_GPS_POS_ALT     = 0x141, ///< GPS Altitude (int32_t, scale 100), Speed (uint16_t, scale 100)
-    CAN_MSG_GPS_TIME        = 0x142, ///< GPS Epoch Time (uint64_t ms)
+// [Medium Priority] Environment & Navigation
+constexpr uint32_t CAN_ID_ALTITUDE      = 0x020; ///< Main: Press (float) / Altimeter: LiDAR (float) + US (float)
+constexpr uint32_t CAN_ID_GPS_POS       = 0x021; ///< Lat (int32_t * 1e7) + Lon (int32_t * 1e7) [Source: GPS]
+constexpr uint32_t CAN_ID_AOA_AOS       = 0x022; ///< SDP31_1 press (float) + SDP31_2 press (float) [Source: Pitot]
 
-    // Altimeter Board Telemetry (0x160 - 0x16F)
-    CAN_MSG_ALTIMETER_DATA = 0x160, ///< Ultrasonic Dist (uint16_t mm), LiDAR Dist (uint16_t mm)
+// [Low Priority] Status & UI
+constexpr uint32_t CAN_ID_BATTERY_VOLT  = 0x050; ///< Battery voltage (float) [Source: Main]
+constexpr uint32_t CAN_ID_VOICE_CMD     = 0x060; ///< Voice alert index (uint8_t) [Source: Any -> Speaker]
+constexpr uint32_t CAN_ID_CALIB_ZERO    = 0x070; ///< Calibration Trigger command [Source: Main]
+constexpr uint32_t CAN_ID_OTA_START     = 0x080; ///< OTA Trigger command [Source: Main]
 
-    // Rudder Board Telemetry (0x170 - 0x17F)
-    CAN_MSG_RUDDER_ANGLE   = 0x170  ///< Rudder Angle: Angle (int16_t, scale 100), ICM-42688 Z-axis Gyro (int16_t, scale 100)
+// Voice alert codes for CAN_ID_VOICE_CMD payload
+enum VoiceAlertCode : uint8_t {
+    ALERT_CALIB_START = 1,
+    ALERT_CALIB_END   = 2,
+    ALERT_LOW_BATTERY = 3,
+    ALERT_LOW_ALTITUDE = 4
 };
 
 /**
  * @brief Scaling Factors for CAN bus data serialization.
  */
 namespace CAN_Scale {
-    constexpr float ACCEL  = 1000.0f; ///< 1g = 1000 units (milli-g)
-    constexpr float GYRO   = 100.0f;  ///< 1 dps = 100 units (centi-dps)
-    constexpr float MAG    = 10.0f;   ///< 1 uT = 10 units (deci-uT)
-    constexpr float PRESS  = 100.0f;  ///< 1 Pa = 100 units (centi-Pascal)
-    constexpr float TEMP   = 100.0f;  ///< 1 C = 100 units (centi-Celsius)
-    constexpr float VOLT   = 1000.0f; ///< 1 V = 1000 units (mV)
-    constexpr float CURR   = 1000.0f; ///< 1 A = 1000 units (mA)
     constexpr float GPS_DEG = 10000000.0f; ///< 1 degree = 1e7 units
-    constexpr float SPEED  = 100.0f;  ///< 1 m/s = 100 units
-    constexpr float ANGLE  = 100.0f;  ///< 1 deg = 100 units (centi-degree)
 }
 
 #endif // CAN_PROTOCOL_HPP

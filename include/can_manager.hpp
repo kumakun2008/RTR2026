@@ -45,13 +45,17 @@ public:
      */
     bool receiveRaw(uint32_t& id, uint8_t* data, uint8_t& dlc, uint32_t timeoutMs = 10);
 
-    // --- Scaled Float Serialized Transmission Helper Methods ---
-    bool transmitAccel(float ax, float ay, float az);
-    bool transmitGyro(float gx, float gy, float gz);
-    bool transmitMag(float mx, float my, float mz);
-    bool transmitBaro(float pressPa, float tempC);
-    bool transmitBattery(float busVolt, float currentAmp);
+    // --- Telemetry Transmissions (Aligned with new CAN ID specification) ---
+    bool transmitAttitude(float pitch, float roll);
+    bool transmitAirspeed(float pressPa, float airspeed);
+    bool transmitRudderAngle(float angle);
+    bool transmitAltitude(float staticPressOrLidar, float ultrasonic = 0.0f, bool isAltimeterNode = false);
+    bool transmitGPSPos(double lat, double lon);
+    bool transmitAoaAos(float press1, float press2);
+    bool transmitBattery(float busVolt);
+    bool transmitVoiceCmd(uint8_t alertCode);
     bool transmitCalibZero();
+    bool transmitOtaStart();
 
 private:
     bool _initialized;

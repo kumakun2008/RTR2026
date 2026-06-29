@@ -35,9 +35,9 @@
 #define SPI_SCK_PIN  18
 #define SPI_MISO_PIN 19
 #define SPI_MOSI_PIN 23
-#define SD_CS_PIN    5
-#define CAN_TX_PIN   4
-#define CAN_RX_PIN   14 
+#define SD_CS_PIN    4
+#define CAN_TX_PIN   32
+#define CAN_RX_PIN   33 
 #define GPS_RX_PIN   16
 #define GPS_TX_PIN   17
 #define GPS_PPS_PIN  34
@@ -47,6 +47,31 @@
 // Altimeter Ultrasonic Sensor Pinouts
 #define ULTRASONIC_TRIG_PIN 26
 #define ULTRASONIC_ECHO_PIN 27
+
+// Node-Specific Pin Overrides
+#if defined(NODE_DISPLAY)
+#undef CAN_TX_PIN
+#undef CAN_RX_PIN
+#define CAN_TX_PIN 25
+#define CAN_RX_PIN 26
+#define TFT_CS   5
+#define TFT_DC   17
+#define TFT_RST  16
+#undef SPI_SCK_PIN
+#undef SPI_MISO_PIN
+#undef SPI_MOSI_PIN
+#undef SD_CS_PIN
+#define SPI_SCK_PIN 14
+#define SPI_MISO_PIN 33
+#define SPI_MOSI_PIN 13
+#define SD_CS_PIN 15
+#elif defined(NODE_SPEAKER)
+#undef CAN_TX_PIN
+#undef CAN_RX_PIN
+#define CAN_TX_PIN 16
+#define CAN_RX_PIN 17
+#endif
+
 #else
 // STM32 specific pins (Bluepill configuration)
 #define I2C_SDA_PIN PB7
@@ -61,6 +86,30 @@
 I2CManager i2cBus(Wire, I2C_SDA_PIN, I2C_SCL_PIN, 400000);
 SDLogger sdLogger;
 CANManager canBus;
+
+// Telemetry cache compiled from CAN (accessible globally across all tasks)
+struct DisplayTelemetry {
+    float accel[3] = {0.0f};
+    float gyro[3] = {0.0f};
+    float mag[3] = {0.0f};
+    float baroPress = 0.0f;
+    float baroTemp = 0.0f;
+    float pitotPress32 = 0.0f;
+    float pitotPress31_1 = 0.0f;
+    float pitotPress31_2 = 0.0f;
+    float pitotTemp32 = 0.0f;
+    float batteryVolt = 0.0f;
+    double gpsLat = 0.0;
+    double gpsLon = 0.0;
+    float gpsAlt = 0.0f;
+    float gpsSpeed = 0.0f;
+    uint8_t gpsSats = 0;
+    uint8_t gpsFix = 0;
+    uint16_t gpsHeading = 0;
+    float altLidar = 0.0f;
+    float altUS = 0.0f;
+    float rudderAngle = 0.0f;
+} flightData;
 
 // ==========================================
 // NODE SPECIFIC OBJECTS & STATE VARIABLES
@@ -90,30 +139,7 @@ int calibSampleCount = 0;
 #elif defined(NODE_DISPLAY)
 #include <Adafruit_GFX.h>
 #include <Adafruit_ILI9341.h>
-#define TFT_CS   15
-#define TFT_DC   2
-#define TFT_RST  4
 Adafruit_ILI9341 tft(TFT_CS, TFT_DC, TFT_RST);
-
-// Visual telemetry cache compiled from CAN
-struct DisplayTelemetry {
-    float accel[3] = {0.0f};
-    float gyro[3] = {0.0f};
-    float mag[3] = {0.0f};
-    float baroPress = 0.0f;
-    float baroTemp = 0.0f;
-    float pitotPress32 = 0.0f;
-    float batteryVolt = 0.0f;
-    double gpsLat = 0.0;
-    double gpsLon = 0.0;
-    float gpsAlt = 0.0f;
-    float gpsSpeed = 0.0f;
-    uint8_t gpsSats = 0;
-    uint8_t gpsFix = 0;
-    float altLidar = 0.0f;
-    float altUS = 0.0f;
-    float rudderAngle = 0.0f;
-} flightData;
 
 volatile int displayPage = 0;
 
@@ -140,6 +166,9 @@ float rawRudderAngle = 0.0f;   // Degrees
 // FREERTOS TASKS DECLARATIONS (ESP32 ONLY)
 // ==========================================
 #ifdef ESP32
+#include <WiFi.h>
+#include <ArduinoOTA.h>
+
 void taskSensorAcquisition(void* pvParameters);
 void taskCANReceive(void* pvParameters);
 void taskSDSync(void* pvParameters);
@@ -154,6 +183,67 @@ void onOTAModeTriggered();
 #if defined(NODE_DISPLAY)
 void taskUIDraw(void* pvParameters);
 #endif
+
+// Multi-node OTA mode variables & configuration helper
+volatile bool isOtaMode = false;
+uint32_t otaTimeoutStart = 0;
+
+void enterOTAMode() {
+    isOtaMode = true;
+    
+    // Shut down task watchdog to prevent bootloops during download
+    esp_task_wdt_delete(NULL);
+    
+    Serial.println("Entering multi-node OTA Update Mode...");
+    
+#if defined(NODE_MAIN)
+    // Main board handles Wi-Fi AP generation via Telemetry module
+#else
+    // Connect to the Main Board's Wi-Fi Access Point
+    WiFi.mode(WIFI_STA);
+    WiFi.begin("RTR_Glider_OTA_AP", "rtr2026glider");
+    
+    Serial.print("Connecting to Glider OTA Network");
+    int retries = 0;
+    while (WiFi.status() != WL_CONNECTED && retries < 30) {
+        delay(500);
+        Serial.print(".");
+        retries++;
+    }
+    
+    if (WiFi.status() == WL_CONNECTED) {
+        Serial.println("\n[OK] Connected to OTA AP");
+        Serial.print("IP Address: ");
+        Serial.println(WiFi.localIP());
+    } else {
+        Serial.println("\n[ERR] Connection timed out. Rebooting...");
+        delay(1000);
+        ESP.restart();
+    }
+#endif
+
+    // Setup node-specific hostname for PlatformIO detection
+#if defined(NODE_MAIN)
+    ArduinoOTA.setHostname("RTR_Main_Board");
+#elif defined(NODE_PITOT)
+    ArduinoOTA.setHostname("RTR_Pitot_Board");
+#elif defined(NODE_DISPLAY)
+    ArduinoOTA.setHostname("RTR_Display_Board");
+#elif defined(NODE_GPS)
+    ArduinoOTA.setHostname("RTR_GPS_Board");
+#elif defined(NODE_SPEAKER)
+    ArduinoOTA.setHostname("RTR_Speaker_Board");
+#elif defined(NODE_ALTIMETER)
+    ArduinoOTA.setHostname("RTR_Altimeter_Board");
+#endif
+
+    ArduinoOTA.onStart([]() { Serial.println("[OTA] Download starting..."); });
+    ArduinoOTA.onEnd([]() { Serial.println("[OTA] Completed. Restarting node..."); ESP.restart(); });
+    ArduinoOTA.onError([](ota_error_t error) { Serial.printf("[OTA] Error[%u]. Rebooting...\n", error); ESP.restart(); });
+    ArduinoOTA.begin();
+    
+    otaTimeoutStart = millis();
+}
 #endif
 
 // ==========================================
@@ -231,11 +321,12 @@ void setup() {
     Serial.println("Running: RTR_GPS_Board Configuration");
     gpsSync.begin(Serial2, GPS_PPS_PIN, GPS_RX_PIN, GPS_TX_PIN);
     xTaskCreatePinnedToCore(taskSensorAcquisition, "GPSTask", 4096, NULL, 5, NULL, 1);
+    xTaskCreatePinnedToCore(taskCANReceive, "CANRxTask", 3072, NULL, 3, NULL, 1);
 
 #elif defined(NODE_SPEAKER)
     Serial.println("Running: RTR_Speaker_Board Configuration");
-    // Connect voice synth module on Serial2 (ATP3011 or similar at 9600 bps)
-    Serial2.begin(9600, SERIAL_8N1, 16, 17); 
+    // Connect voice synth module on Serial2 (AquesTalk Pico LSI at 9600 bps: RX=IO33, TX=IO32)
+    Serial2.begin(9600, SERIAL_8N1, 33, 32); 
     xTaskCreatePinnedToCore(taskCANReceive, "CANRxTask", 3072, NULL, 3, NULL, 1);
 
 #elif defined(NODE_ALTIMETER)
@@ -244,6 +335,7 @@ void setup() {
     pinMode(ULTRASONIC_ECHO_PIN, INPUT);
     // ESP32-C3 runs altimeter sensors task
     xTaskCreate(taskSensorAcquisition, "AltimeterTask", 3072, NULL, 5, NULL);
+    xTaskCreate(taskCANReceive, "CANRxTask", 3072, NULL, 3, NULL);
 
 #elif defined(NODE_RUDDER)
     Serial.println("Running: RTR_Rudder_Board Configuration (STM32)");
@@ -269,11 +361,14 @@ void loop() {
     if (millis() - lastRead >= 10) { // 100Hz Rate
         lastRead = millis();
         
-        // 1. Read ICM-42688 Z-Axis Gyro
+        // 1. Read ICM-42688 to calculate pitch/roll
         IMUPayload imuData;
-        float gyroZ = 0.0f;
+        float pitch = 0.0f;
+        float roll = 0.0f;
         if (rudderIMU.read(imuData)) {
-            gyroZ = imuData.gyro_z;
+            pitch = atan2(-imuData.accel_x, sqrt(imuData.accel_y * imuData.accel_y + imuData.accel_z * imuData.accel_z)) * 180.0f / PI;
+            roll = atan2(imuData.accel_y, imuData.accel_z) * 180.0f / PI;
+            canBus.transmitAttitude(pitch, roll);
         }
         
         // 2. Read AS5600 I2C Angle Sensor (Address 0x36)
@@ -286,16 +381,7 @@ void loop() {
         }
 
         // 3. Transmit scaled values on CAN
-        int16_t rawAngleScale = (int16_t)(rawRudderAngle * CAN_Scale::ANGLE);
-        int16_t rawGyroZScale = (int16_t)(gyroZ * CAN_Scale::GYRO);
-        
-        uint8_t canPayload[4];
-        canPayload[0] = (uint8_t)(rawAngleScale >> 8);
-        canPayload[1] = (uint8_t)(rawAngleScale & 0xFF);
-        canPayload[2] = (uint8_t)(rawGyroZScale >> 8);
-        canPayload[3] = (uint8_t)(rawGyroZScale & 0xFF);
-        
-        canBus.transmitRaw(CAN_MSG_RUDDER_ANGLE, canPayload, 4);
+        canBus.transmitRudderAngle(rawRudderAngle);
     }
 #endif
 }
@@ -326,19 +412,21 @@ void taskSensorAcquisition(void* pvParameters) {
         IMUPayload imuData;
         if (mainIMU.read(imuData)) {
             sdLogger.logPacket(LOG_ID_MAIN_IMU, &imuData, sizeof(imuData), timestamp);
-            canBus.transmitAccel(imuData.accel_x, imuData.accel_y, imuData.accel_z);
-            canBus.transmitGyro(imuData.gyro_x, imuData.gyro_y, imuData.gyro_z);
+            
+            // Calculate Pitch & Roll from Accel
+            float pitch = atan2(-imuData.accel_x, sqrt(imuData.accel_y * imuData.accel_y + imuData.accel_z * imuData.accel_z)) * 180.0f / PI;
+            float roll = atan2(imuData.accel_y, imuData.accel_z) * 180.0f / PI;
+            canBus.transmitAttitude(pitch, roll);
         }
         MagPayload magData;
         if (mainMag.read(magData)) {
             sdLogger.logPacket(LOG_ID_MAIN_MAG, &magData, sizeof(magData), timestamp);
-            canBus.transmitMag(magData.mag_x, magData.mag_y, magData.mag_z);
         }
         if (loopCounter % 4 != 0) { // 75Hz roughly polls 3 out of 4 cycles at 100Hz
             BaroPayload baroData;
             if (mainBaro.read(baroData)) {
                 sdLogger.logPacket(LOG_ID_MAIN_BARO, &baroData, sizeof(baroData), timestamp);
-                canBus.transmitBaro(baroData.pressure * 100.0f, baroData.temperature);
+                canBus.transmitAltitude(baroData.pressure * 100.0f, 0.0f, false);
             }
         }
 
@@ -363,66 +451,28 @@ void taskSensorAcquisition(void* pvParameters) {
             PitotPayload pitotData = { press32, press31_1, press31_2, temp32 };
             sdLogger.logPacket(LOG_ID_PITOT_DATA, &pitotData, sizeof(pitotData), timestamp);
             
-            // Broadcast pressures on CAN. Package: [SDP32 (4B)] + [SDP31_1 (4B)]
-            int32_t raw32 = (int32_t)(press32 * CAN_Scale::PRESS);
-            int32_t raw31_1 = (int32_t)(press31_1 * CAN_Scale::PRESS);
-            uint8_t pData[8];
-            memcpy(pData, &raw32, 4);
-            memcpy(pData + 4, &raw31_1, 4);
-            canBus.transmitRaw(CAN_MSG_PITOT_PRESSURES, pData, 8);
+            // Broadcast dynamic pressure and calculated airspeed on CAN
+            float airspeed = (press32 > 0.0f) ? sqrt(2.0f * press32 / 1.225f) : 0.0f;
+            canBus.transmitAirspeed(press32, airspeed);
+            canBus.transmitAoaAos(press31_1, press31_2);
         }
 
         float roll = 0, pitch = 0, yaw = 0;
         if (pitotIMU.read(roll, pitch, yaw)) {
-            int16_t r = (int16_t)(roll * CAN_Scale::ANGLE);
-            int16_t p = (int16_t)(pitch * CAN_Scale::ANGLE);
-            int16_t y = (int16_t)(yaw * CAN_Scale::ANGLE);
-            uint8_t data[6] = {
-                (uint8_t)(r >> 8), (uint8_t)(r & 0xFF),
-                (uint8_t)(p >> 8), (uint8_t)(p & 0xFF),
-                (uint8_t)(y >> 8), (uint8_t)(y & 0xFF)
-            };
-            canBus.transmitRaw(CAN_MSG_PITOT_IMU, data, 6);
+            // Read Pitot IMU (locally logged or processed if needed)
         }
 
         float hum = 0, tempSHT = 0;
         if (pitotSHT.read(tempSHT, hum)) {
-            int16_t tVal = (int16_t)(tempSHT * CAN_Scale::TEMP);
-            uint16_t hVal = (uint16_t)(hum * CAN_Scale::TEMP);
-            uint8_t envData[4] = {
-                (uint8_t)(tVal >> 8), (uint8_t)(tVal & 0xFF),
-                (uint8_t)(hVal >> 8), (uint8_t)(hVal & 0xFF)
-            };
-            canBus.transmitRaw(CAN_MSG_PITOT_ENV, envData, 4);
+            // Read Pitot SHT Env (locally logged or processed if needed)
         }
 
 #elif defined(NODE_GPS)
         // Read GPS UTC Time and Position from actual stream parser
         GPSPayload gpsData;
         if (gpsSync.getGPSData(gpsData)) {
-            // 1. Send Time Sync to CAN
-            uint64_t utcUs = gpsSync.getAbsoluteTimeUs();
-            uint8_t timePayload[8];
-            memcpy(timePayload, &utcUs, 8);
-            canBus.transmitRaw(CAN_MSG_GPS_TIME, timePayload, 8);
-            
-            // 2. Send Lat/Lon to CAN
-            int32_t lat = (int32_t)(gpsData.latitude * CAN_Scale::GPS_DEG);
-            int32_t lon = (int32_t)(gpsData.longitude * CAN_Scale::GPS_DEG);
-            uint8_t posPayload[8];
-            memcpy(posPayload, &lat, 4);
-            memcpy(posPayload + 4, &lon, 4);
-            canBus.transmitRaw(CAN_MSG_GPS_POS_LAT_LON, posPayload, 8);
-            
-            // 3. Send Alt/Speed to CAN
-            int32_t alt = (int32_t)(gpsData.altitude * 100.0f);
-            uint16_t spd = (uint16_t)(gpsData.speed * CAN_Scale::SPEED);
-            uint8_t altPayload[8];
-            memcpy(altPayload, &alt, 4);
-            memcpy(altPayload + 4, &spd, 2);
-            altPayload[6] = gpsData.sat_count;
-            altPayload[7] = gpsData.fix_status;
-            canBus.transmitRaw(CAN_MSG_GPS_POS_ALT, altPayload, 8);
+            // Transmit scaled Lat/Lon coordinates on CAN
+            canBus.transmitGPSPos(gpsData.latitude, gpsData.longitude);
         }
 
 #elif defined(NODE_ALTIMETER)
@@ -457,14 +507,8 @@ void taskSensorAcquisition(void* pvParameters) {
             }
         }
 
-        // 3. Broadcast Altimeter values on CAN: format in mm
-        uint16_t mmUS = (uint16_t)(rangeUltrasonic * 1000.0f);
-        uint16_t mmLidar = (uint16_t)(rangeLiDAR * 1000.0f);
-        uint8_t altPayload[4] = {
-            (uint8_t)(mmUS >> 8), (uint8_t)(mmUS & 0xFF),
-            (uint8_t)(mmLidar >> 8), (uint8_t)(mmLidar & 0xFF)
-        };
-        canBus.transmitRaw(CAN_MSG_ALTIMETER_DATA, altPayload, 4);
+        // 3. Broadcast Altimeter values on CAN
+        canBus.transmitAltitude(rangeLiDAR, rangeUltrasonic, true);
 #endif
 
         loopCounter++;
@@ -477,128 +521,152 @@ void taskCANReceive(void* pvParameters) {
     uint8_t rxDlc = 0;
 
     while (true) {
+        if (isOtaMode) {
+            enterOTAMode();
+            while (true) {
+                ArduinoOTA.handle();
+                if (millis() - otaTimeoutStart > 300000) { // 5 minutes
+                    Serial.println("[OTA] Timeout. Rebooting...");
+                    delay(1000);
+                    ESP.restart();
+                }
+                vTaskDelay(pdMS_TO_TICKS(10));
+            }
+        }
+
         if (canBus.receiveRaw(rxId, rxData, rxDlc, 20)) {
+            if (rxId == CAN_ID_OTA_START) {
+                isOtaMode = true;
+                continue;
+            }
 #if defined(NODE_MAIN)
             // Central Blackbox SD Logging
             uint64_t timestamp = timeSync.getAbsoluteTimeUs();
             
-            if (rxId == CAN_MSG_PITOT_PRESSURES) {
-                int32_t p32, p31_1;
-                memcpy(&p32, rxData, 4);
-                memcpy(&p31_1, rxData + 4, 4);
-                float pressures[2] = { (float)p32 / CAN_Scale::PRESS, (float)p31_1 / CAN_Scale::PRESS };
-                sdLogger.logPacket(LOG_ID_PITOT_DATA, pressures, sizeof(pressures), timestamp);
+            if (rxId == CAN_ID_AIRSPEED) {
+                memcpy(&flightData.pitotPress32, rxData, 4);
+                memcpy(&flightData.gpsSpeed, rxData + 4, 4);
+                
+                // Construct and log Pitot data
+                PitotPayload pPayload = {
+                    flightData.pitotPress32,
+                    flightData.pitotPress31_1,
+                    flightData.pitotPress31_2,
+                    flightData.pitotTemp32
+                };
+                sdLogger.logPacket(LOG_ID_PITOT_DATA, &pPayload, sizeof(pPayload), timestamp);
             }
-            else if (rxId == CAN_MSG_GPS_POS_LAT_LON) {
-                int32_t lat, lon;
-                memcpy(&lat, rxData, 4);
-                memcpy(&lon, rxData + 4, 4);
-                double coords[2] = { (double)lat / CAN_Scale::GPS_DEG, (double)lon / CAN_Scale::GPS_DEG };
-                sdLogger.logPacket(LOG_ID_GPS, coords, sizeof(coords), timestamp);
+            else if (rxId == CAN_ID_AOA_AOS) {
+                memcpy(&flightData.pitotPress31_1, rxData, 4);
+                memcpy(&flightData.pitotPress31_2, rxData + 4, 4);
             }
-            else if (rxId == CAN_MSG_ALTIMETER_DATA) {
-                uint16_t mmUS = (uint16_t)((rxData[0] << 8) | rxData[1]);
-                uint16_t mmLidar = (uint16_t)((rxData[2] << 8) | rxData[3]);
-                float distances[2] = { (float)mmUS / 1000.0f, (float)mmLidar / 1000.0f };
-                sdLogger.logPacket(LOG_ID_ALTIMETER, distances, sizeof(distances), timestamp);
+            else if (rxId == CAN_ID_GPS_POS) {
+                int32_t latVal, lonVal;
+                memcpy(&latVal, rxData, 4);
+                memcpy(&lonVal, rxData + 4, 4);
+                flightData.gpsLat = (double)latVal / CAN_Scale::GPS_DEG;
+                flightData.gpsLon = (double)lonVal / CAN_Scale::GPS_DEG;
+                
+                // Construct and log GPS data (mocking/retaining struct for binary compatibility)
+                GPSPayload gPayload = {
+                    flightData.gpsLat,
+                    flightData.gpsLon,
+                    0.0f,
+                    flightData.gpsSpeed,
+                    flightData.gpsSats,
+                    flightData.gpsFix,
+                    flightData.gpsHeading
+                };
+                sdLogger.logPacket(LOG_ID_GPS, &gPayload, sizeof(gPayload), timestamp);
             }
-            else if (rxId == CAN_MSG_RUDDER_ANGLE) {
-                int16_t rawAngle = (int16_t)((rxData[0] << 8) | rxData[1]);
-                int16_t rawGyro = (int16_t)((rxData[2] << 8) | rxData[3]);
-                float rudderState[2] = { (float)rawAngle / CAN_Scale::ANGLE, (float)rawGyro / CAN_Scale::GYRO };
-                sdLogger.logPacket(LOG_ID_RUDDER, rudderState, sizeof(rudderState), timestamp);
+            else if (rxId == CAN_ID_ALTITUDE) {
+                memcpy(&flightData.altLidar, rxData, 4);
+                memcpy(&flightData.altUS, rxData + 4, 4);
+                
+                // Construct and log Altimeter data
+                AltimeterPayload aPayload = {
+                    flightData.altUS,
+                    flightData.altLidar
+                };
+                sdLogger.logPacket(LOG_ID_ALTIMETER, &aPayload, sizeof(aPayload), timestamp);
+            }
+            else if (rxId == CAN_ID_RUDDER_ANGLE) {
+                memcpy(&flightData.rudderAngle, rxData, 4);
+                
+                // Construct and log Rudder data
+                RudderPayload rPayload = {
+                    flightData.rudderAngle,
+                    0.0f
+                };
+                sdLogger.logPacket(LOG_ID_RUDDER, &rPayload, sizeof(rPayload), timestamp);
             }
 
 #elif defined(NODE_PITOT)
-            if (rxId == CAN_MSG_CMD_CALIB_ZERO) {
+            if (rxId == CAN_ID_CALIB_ZERO) {
                 calibSampleCount = 0;
                 isCalibrating = true;
             }
 
 #elif defined(NODE_DISPLAY)
             // Parse CAN frames into local flightData cache
-            if (rxId == CAN_MSG_MAIN_IMU_ACCEL) {
-                int16_t rx = (int16_t)((rxData[0] << 8) | rxData[1]);
-                int16_t ry = (int16_t)((rxData[2] << 8) | rxData[3]);
-                int16_t rz = (int16_t)((rxData[4] << 8) | rxData[5]);
-                flightData.accel[0] = (float)rx / CAN_Scale::ACCEL;
-                flightData.accel[1] = (float)ry / CAN_Scale::ACCEL;
-                flightData.accel[2] = (float)rz / CAN_Scale::ACCEL;
+            if (rxId == CAN_ID_ATTITUDE && rxDlc >= 8) {
+                memcpy(&flightData.gyro[0], rxData, 4); // Pitch
+                memcpy(&flightData.gyro[1], rxData + 4, 4); // Roll
             }
-            else if (rxId == CAN_MSG_MAIN_IMU_GYRO) {
-                int16_t rx = (int16_t)((rxData[0] << 8) | rxData[1]);
-                int16_t ry = (int16_t)((rxData[2] << 8) | rxData[3]);
-                int16_t rz = (int16_t)((rxData[4] << 8) | rxData[5]);
-                flightData.gyro[0] = (float)rx / CAN_Scale::GYRO;
-                flightData.gyro[1] = (float)ry / CAN_Scale::GYRO;
-                flightData.gyro[2] = (float)rz / CAN_Scale::GYRO;
+            else if (rxId == CAN_ID_AIRSPEED && rxDlc >= 8) {
+                memcpy(&flightData.pitotPress32, rxData, 4);
+                memcpy(&flightData.gpsSpeed, rxData + 4, 4); // Airspeed
             }
-            else if (rxId == CAN_MSG_MAIN_ENV) {
-                int32_t press;
-                int16_t temp;
-                memcpy(&press, rxData, 4);
-                memcpy(&temp, rxData + 4, 2);
-                flightData.baroPress = (float)press / CAN_Scale::PRESS;
-                flightData.baroTemp = (float)temp / CAN_Scale::TEMP;
+            else if (rxId == CAN_ID_RUDDER_ANGLE && rxDlc >= 4) {
+                memcpy(&flightData.rudderAngle, rxData, 4);
             }
-            else if (rxId == CAN_MSG_MAIN_BATTERY) {
-                uint16_t volt = (uint16_t)((rxData[0] << 8) | rxData[1]);
-                flightData.batteryVolt = (float)volt / CAN_Scale::VOLT;
+            else if (rxId == CAN_ID_ALTITUDE && rxDlc >= 8) {
+                float val1, val2;
+                memcpy(&val1, rxData, 4);
+                memcpy(&val2, rxData + 4, 4);
+                if (val2 > 0.001f) {
+                    flightData.altLidar = val1;
+                    flightData.altUS = val2;
+                } else {
+                    flightData.baroPress = val1 / 100.0f; // Pa to hPa
+                }
             }
-            else if (rxId == CAN_MSG_PITOT_PRESSURES) {
-                int32_t press32;
-                memcpy(&press32, rxData, 4);
-                flightData.pitotPress32 = (float)press32 / CAN_Scale::PRESS;
+            else if (rxId == CAN_ID_GPS_POS && rxDlc >= 8) {
+                int32_t latVal, lonVal;
+                memcpy(&latVal, rxData, 4);
+                memcpy(&lonVal, rxData + 4, 4);
+                flightData.gpsLat = (double)latVal / CAN_Scale::GPS_DEG;
+                flightData.gpsLon = (double)lonVal / CAN_Scale::GPS_DEG;
+                flightData.gpsSats = 8; // Simulated satellite status when receiving positions
+                flightData.gpsFix = 2;
             }
-            else if (rxId == CAN_MSG_GPS_POS_LAT_LON) {
-                int32_t lat, lon;
-                memcpy(&lat, rxData, 4);
-                memcpy(&lon, rxData + 4, 4);
-                flightData.gpsLat = (double)lat / CAN_Scale::GPS_DEG;
-                flightData.gpsLon = (double)lon / CAN_Scale::GPS_DEG;
-            }
-            else if (rxId == CAN_MSG_GPS_POS_ALT) {
-                int32_t alt;
-                uint16_t spd;
-                memcpy(&alt, rxData, 4);
-                memcpy(&spd, rxData + 4, 2);
-                flightData.gpsAlt = (float)alt / 100.0f;
-                flightData.gpsSpeed = (float)spd / CAN_Scale::SPEED;
-                flightData.gpsSats = rxData[6];
-                flightData.gpsFix = rxData[7];
-            }
-            else if (rxId == CAN_MSG_ALTIMETER_DATA) {
-                uint16_t mmUS = (uint16_t)((rxData[0] << 8) | rxData[1]);
-                uint16_t mmLidar = (uint16_t)((rxData[2] << 8) | rxData[3]);
-                flightData.altUS = (float)mmUS / 1000.0f;
-                flightData.altLidar = (float)mmLidar / 1000.0f;
-            }
-            else if (rxId == CAN_MSG_RUDDER_ANGLE) {
-                int16_t rawAngle = (int16_t)((rxData[0] << 8) | rxData[1]);
-                flightData.rudderAngle = (float)rawAngle / CAN_Scale::ANGLE;
+            else if (rxId == CAN_ID_BATTERY_VOLT && rxDlc >= 4) {
+                memcpy(&flightData.batteryVolt, rxData, 4);
             }
 
 #elif defined(NODE_SPEAKER)
-            // Parse alerts based on telemetry parameters
-            if (rxId == CAN_MSG_MAIN_BATTERY) {
-                uint16_t volt = (uint16_t)((rxData[0] << 8) | rxData[1]);
-                float v = (float)volt / CAN_Scale::VOLT;
-                // Alert if voltage drops below low battery limit (e.g. 2S Lipo critical limit 7.0V)
-                if (v < 7.0f) {
+            // Parse alerts based on voice command packets
+            if (rxId == CAN_ID_VOICE_CMD && rxDlc >= 1) {
+                uint8_t alertCode = rxData[0];
+                if (alertCode == ALERT_CALIB_START) {
+                    alertCalibStart = true;
+                }
+                else if (alertCode == ALERT_CALIB_END) {
+                    alertCalibEnd = true;
+                }
+                else if (alertCode == ALERT_LOW_BATTERY) {
                     alertLowBattery = true;
                 }
-            }
-            else if (rxId == CAN_MSG_ALTIMETER_DATA) {
-                uint16_t mmUS = (uint16_t)((rxData[0] << 8) | rxData[1]);
-                uint16_t mmLidar = (uint16_t)((rxData[2] << 8) | rxData[3]);
-                float currentAlt = (float)min(mmUS, mmLidar) / 1000.0f;
-                // Alert if glider height is critical below 5 meters
-                if (currentAlt > 0.1f && currentAlt < 5.0f) {
+                else if (alertCode == ALERT_LOW_ALTITUDE) {
                     alertLowAltitude = true;
                 }
             }
-            else if (rxId == CAN_MSG_CMD_CALIB_ZERO) {
-                alertCalibStart = true;
+            else if (rxId == CAN_ID_ALTITUDE && rxDlc >= 8) {
+                float currentAlt;
+                memcpy(&currentAlt, rxData, 4); // LiDAR is first float in Altimeter payload
+                if (currentAlt > 0.1f && currentAlt < 5.0f) {
+                    alertLowAltitude = true;
+                }
             }
 #endif
         }
@@ -618,8 +686,8 @@ void taskCANReceive(void* pvParameters) {
             float loggedOffsets[3] = { finalOffset32, finalOffset31_1, finalOffset31_2 };
             sdLogger.logPacket(LOG_ID_EVENT_MARK, loggedOffsets, sizeof(loggedOffsets), ts);
             
-            // Broadcast calibration complete frame
-            canBus.transmitRaw(CAN_MSG_CMD_OTA_START, NULL, 0); // Reuse OTA as completion command trigger for speech alert
+            // Broadcast calibration complete voice alert frame
+            canBus.transmitVoiceCmd(ALERT_CALIB_END);
         }
 #endif
 
@@ -640,11 +708,6 @@ void taskCANReceive(void* pvParameters) {
         else if (alertLowAltitude) {
             alertLowAltitude = false;
             Serial2.print("ko'udoga/te'ika/shiteimasu.\r"); // "高度が低下しています"
-        }
-        
-        // Listen for completion alert triggers mapped to OTA message ID
-        if (rxId == CAN_MSG_CMD_OTA_START) {
-            alertCalibEnd = true;
         }
 #endif
         vTaskDelay(pdMS_TO_TICKS(1));
@@ -670,7 +733,11 @@ void taskBatteryVoltage(void* pvParameters) {
         uint64_t timestamp = timeSync.getAbsoluteTimeUs();
         BatteryPayload batPayload = { cellVoltage, 0.0f };
         sdLogger.logPacket(LOG_ID_BATTERY, &batPayload, sizeof(batPayload), timestamp);
-        canBus.transmitBattery(cellVoltage, 0.0f);
+        canBus.transmitBattery(cellVoltage);
+        
+        if (cellVoltage < 7.0f) {
+            canBus.transmitVoiceCmd(ALERT_LOW_BATTERY);
+        }
     }
 }
 
@@ -700,9 +767,13 @@ void taskTelemetry(void* pvParameters) {
 
 void onCalibZeroCommandTriggered() {
     canBus.transmitCalibZero();
+    canBus.transmitVoiceCmd(ALERT_CALIB_START);
 }
 
 void onOTAModeTriggered() {
+    // Broadcast OTA start command to all other ESP32 nodes via CAN
+    canBus.transmitOtaStart();
+    delay(100);
     esp_task_wdt_delete(NULL);
 }
 #endif
@@ -740,8 +811,8 @@ void taskUIDraw(void* pvParameters) {
             tft.setTextColor(ILI9341_CYAN);
             tft.println("=== MOTION STATUS ===");
             tft.setTextColor(ILI9341_WHITE);
-            tft.printf("Accel: %+5.2f %+5.2f %+5.2f\n", flightData.accel[0], flightData.accel[1], flightData.accel[2]);
-            tft.printf("Gyro : %+5.1f %+5.1f %+5.1f\n", flightData.gyro[0], flightData.gyro[1], flightData.gyro[2]);
+            tft.printf("Pitch : %+5.1f deg\n", flightData.gyro[0]);
+            tft.printf("Roll  : %+5.1f deg\n", flightData.gyro[1]);
             tft.printf("Rudder: %+5.2f deg\n", flightData.rudderAngle);
         }
         else {

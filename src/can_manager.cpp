@@ -81,86 +81,73 @@ bool CANManager::receiveRaw(uint32_t& id, uint8_t* data, uint8_t& dlc, uint32_t 
     return false;
 }
 
-// --- Serialized Float Transmissions ---
+// --- Telemetry Transmissions (ESP32) ---
 
-bool CANManager::transmitAccel(float ax, float ay, float az) {
-    int16_t rawX = (int16_t)(ax * CAN_Scale::ACCEL);
-    int16_t rawY = (int16_t)(ay * CAN_Scale::ACCEL);
-    int16_t rawZ = (int16_t)(az * CAN_Scale::ACCEL);
-    
-    uint8_t data[6];
-    data[0] = (uint8_t)(rawX >> 8);
-    data[1] = (uint8_t)(rawX & 0xFF);
-    data[2] = (uint8_t)(rawY >> 8);
-    data[3] = (uint8_t)(rawY & 0xFF);
-    data[4] = (uint8_t)(rawZ >> 8);
-    data[5] = (uint8_t)(rawZ & 0xFF);
-    
-    return transmitRaw(CAN_MSG_MAIN_IMU_ACCEL, data, 6);
+bool CANManager::transmitAttitude(float pitch, float roll) {
+    uint8_t data[8];
+    memcpy(data, &pitch, 4);
+    memcpy(data + 4, &roll, 4);
+    return transmitRaw(CAN_ID_ATTITUDE, data, 8);
 }
 
-bool CANManager::transmitGyro(float gx, float gy, float gz) {
-    int16_t rawX = (int16_t)(gx * CAN_Scale::GYRO);
-    int16_t rawY = (int16_t)(gy * CAN_Scale::GYRO);
-    int16_t rawZ = (int16_t)(gz * CAN_Scale::GYRO);
-    
-    uint8_t data[6];
-    data[0] = (uint8_t)(rawX >> 8);
-    data[1] = (uint8_t)(rawX & 0xFF);
-    data[2] = (uint8_t)(rawY >> 8);
-    data[3] = (uint8_t)(rawY & 0xFF);
-    data[4] = (uint8_t)(rawZ >> 8);
-    data[5] = (uint8_t)(rawZ & 0xFF);
-    
-    return transmitRaw(CAN_MSG_MAIN_IMU_GYRO, data, 6);
+bool CANManager::transmitAirspeed(float pressPa, float airspeed) {
+    uint8_t data[8];
+    memcpy(data, &pressPa, 4);
+    memcpy(data + 4, &airspeed, 4);
+    return transmitRaw(CAN_ID_AIRSPEED, data, 8);
 }
 
-bool CANManager::transmitMag(float mx, float my, float mz) {
-    int16_t rawX = (int16_t)(mx * CAN_Scale::MAG);
-    int16_t rawY = (int16_t)(my * CAN_Scale::MAG);
-    int16_t rawZ = (int16_t)(mz * CAN_Scale::MAG);
-    
-    uint8_t data[6];
-    data[0] = (uint8_t)(rawX >> 8);
-    data[1] = (uint8_t)(rawX & 0xFF);
-    data[2] = (uint8_t)(rawY >> 8);
-    data[3] = (uint8_t)(rawY & 0xFF);
-    data[4] = (uint8_t)(rawZ >> 8);
-    data[5] = (uint8_t)(rawZ & 0xFF);
-    
-    return transmitRaw(CAN_MSG_MAIN_MAG, data, 6);
-}
-
-bool CANManager::transmitBaro(float pressPa, float tempC) {
-    int32_t rawPress = (int32_t)(pressPa * CAN_Scale::PRESS);
-    int16_t rawTemp  = (int16_t)(tempC * CAN_Scale::TEMP);
-    
-    uint8_t data[6];
-    data[0] = (uint8_t)(rawPress >> 24);
-    data[1] = (uint8_t)(rawPress >> 16);
-    data[2] = (uint8_t)(rawPress >> 8);
-    data[3] = (uint8_t)(rawPress & 0xFF);
-    data[4] = (uint8_t)(rawTemp >> 8);
-    data[5] = (uint8_t)(rawTemp & 0xFF);
-    
-    return transmitRaw(CAN_MSG_MAIN_ENV, data, 6);
-}
-
-bool CANManager::transmitBattery(float busVolt, float currentAmp) {
-    uint16_t rawVolt = (uint16_t)(busVolt * CAN_Scale::VOLT);
-    int16_t rawCurr  = (int16_t)(currentAmp * CAN_Scale::CURR);
-    
+bool CANManager::transmitRudderAngle(float angle) {
     uint8_t data[4];
-    data[0] = (uint8_t)(rawVolt >> 8);
-    data[1] = (uint8_t)(rawVolt & 0xFF);
-    data[2] = (uint8_t)(rawCurr >> 8);
-    data[3] = (uint8_t)(rawCurr & 0xFF);
-    
-    return transmitRaw(CAN_MSG_MAIN_BATTERY, data, 4);
+    memcpy(data, &angle, 4);
+    return transmitRaw(CAN_ID_RUDDER_ANGLE, data, 4);
+}
+
+bool CANManager::transmitAltitude(float staticPressOrLidar, float ultrasonic, bool isAltimeterNode) {
+    uint8_t data[8];
+    if (isAltimeterNode) {
+        memcpy(data, &staticPressOrLidar, 4);
+        memcpy(data + 4, &ultrasonic, 4);
+    } else {
+        memcpy(data, &staticPressOrLidar, 4);
+        float zero = 0.0f;
+        memcpy(data + 4, &zero, 4);
+    }
+    return transmitRaw(CAN_ID_ALTITUDE, data, 8);
+}
+
+bool CANManager::transmitGPSPos(double lat, double lon) {
+    int32_t latVal = (int32_t)(lat * CAN_Scale::GPS_DEG);
+    int32_t lonVal = (int32_t)(lon * CAN_Scale::GPS_DEG);
+    uint8_t data[8];
+    memcpy(data, &latVal, 4);
+    memcpy(data + 4, &lonVal, 4);
+    return transmitRaw(CAN_ID_GPS_POS, data, 8);
+}
+
+bool CANManager::transmitAoaAos(float press1, float press2) {
+    uint8_t data[8];
+    memcpy(data, &press1, 4);
+    memcpy(data + 4, &press2, 4);
+    return transmitRaw(CAN_ID_AOA_AOS, data, 8);
+}
+
+bool CANManager::transmitBattery(float busVolt) {
+    uint8_t data[4];
+    memcpy(data, &busVolt, 4);
+    return transmitRaw(CAN_ID_BATTERY_VOLT, data, 4);
+}
+
+bool CANManager::transmitVoiceCmd(uint8_t alertCode) {
+    return transmitRaw(CAN_ID_VOICE_CMD, &alertCode, 1);
 }
 
 bool CANManager::transmitCalibZero() {
-    return transmitRaw(CAN_MSG_CMD_CALIB_ZERO, NULL, 0);
+    return transmitRaw(CAN_ID_CALIB_ZERO, NULL, 0);
+}
+
+bool CANManager::transmitOtaStart() {
+    return transmitRaw(CAN_ID_OTA_START, NULL, 0);
 }
 
 #else // Non-ESP32 Mock implementations (STM32 stubs)
@@ -171,11 +158,15 @@ bool CANManager::begin(int txPin, int rxPin) { _initialized = true; return true;
 void CANManager::end() { _initialized = false; }
 bool CANManager::transmitRaw(uint32_t id, const uint8_t* data, uint8_t dlc) { return true; }
 bool CANManager::receiveRaw(uint32_t& id, uint8_t* data, uint8_t& dlc, uint32_t timeoutMs) { return false; }
-bool CANManager::transmitAccel(float ax, float ay, float az) { return true; }
-bool CANManager::transmitGyro(float gx, float gy, float gz) { return true; }
-bool CANManager::transmitMag(float mx, float my, float mz) { return true; }
-bool CANManager::transmitBaro(float pressPa, float tempC) { return true; }
-bool CANManager::transmitBattery(float busVolt, float currentAmp) { return true; }
+bool CANManager::transmitAttitude(float pitch, float roll) { return true; }
+bool CANManager::transmitAirspeed(float pressPa, float airspeed) { return true; }
+bool CANManager::transmitRudderAngle(float angle) { return true; }
+bool CANManager::transmitAltitude(float staticPressOrLidar, float ultrasonic, bool isAltimeterNode) { return true; }
+bool CANManager::transmitGPSPos(double lat, double lon) { return true; }
+bool CANManager::transmitAoaAos(float press1, float press2) { return true; }
+bool CANManager::transmitBattery(float busVolt) { return true; }
+bool CANManager::transmitVoiceCmd(uint8_t alertCode) { return true; }
 bool CANManager::transmitCalibZero() { return true; }
+bool CANManager::transmitOtaStart() { return true; }
 
 #endif // ESP32
