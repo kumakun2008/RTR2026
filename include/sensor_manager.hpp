@@ -132,6 +132,7 @@ private:
     bool _isSDP32;
     float _scaleFactor; ///< LSB per Pascal
     float _zeroOffset;  ///< Dynamically calculated zero-offset (Pa)
+    uint32_t _errorCount = 0;
 };
 
 /**

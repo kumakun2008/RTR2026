@@ -200,23 +200,44 @@ SDP3xSensor::SDP3xSensor(I2CManager& i2c, uint8_t address, bool isSDP32)
 }
 
 bool SDP3xSensor::begin() {
-    // Continuous differential pressure measurement with averaging: command 0x3615
     uint8_t cmd[2] = { 0x36, 0x15 };
-    if (!_i2c.writeRaw(_address, cmd, 2)) {
+    bool success = false;
+    
+    for (int retry = 0; retry < 5; retry++) {
+        if (_i2c.writeRaw(_address, cmd, 2)) {
+            success = true;
+            break;
+        }
+        delay(50);
+    }
+    
+    if (!success) {
+        Serial.printf("[SDP3x ERR] Failed to start continuous mode at address 0x%02X\n", _address);
         return false;
     }
     
+    _errorCount = 0;
     _initialized = true;
     return true;
 }
 
 bool SDP3xSensor::read(float& pressure, float& temperature) {
-    if (!_initialized) return false;
+    if (!_initialized) {
+        if (!begin()) return false;
+    }
     
     uint8_t rawData[6]; // [Pres_H, Pres_L, Pres_CRC, Temp_H, Temp_L, Temp_CRC]
     if (!_i2c.readRaw(_address, rawData, 6)) {
+        _errorCount++;
+        if (_errorCount > 10) {
+            _initialized = false; // Force re-initialization on next read loop
+            _errorCount = 0;
+            Serial.printf("[SDP3x] Lost contact with sensor 0x%02X. Scheduling re-init.\n", _address);
+        }
         return false;
     }
+    
+    _errorCount = 0; // Reset counter on success
     
     int16_t rawPress = (int16_t)((rawData[0] << 8) | rawData[1]);
     int16_t rawTemp  = (int16_t)((rawData[3] << 8) | rawData[4]);
