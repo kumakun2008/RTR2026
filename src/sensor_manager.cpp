@@ -201,22 +201,13 @@ SDP3xSensor::SDP3xSensor(I2CManager& i2c, uint8_t address, bool isSDP32)
 
 bool SDP3xSensor::begin() {
     uint8_t cmd[2] = { 0x36, 0x15 };
-    bool success = false;
     
-    for (int retry = 0; retry < 5; retry++) {
-        if (_i2c.writeRaw(_address, cmd, 2)) {
-            success = true;
-            break;
-        }
-        delay(50);
-    }
-    
-    if (!success) {
-        Serial.printf("[SDP3x ERR] Failed to start continuous mode at address 0x%02X\n", _address);
+    // Single non-blocking write attempt to avoid halting the main thread
+    if (!_i2c.writeRaw(_address, cmd, 2)) {
         return false;
     }
     
-    delay(50); // Wait for the first measurement to become ready (takes 20-45ms)
+    _lastInitTime = millis();
     _errorCount = 0;
     _initialized = true;
     return true;
@@ -224,16 +215,27 @@ bool SDP3xSensor::begin() {
 
 bool SDP3xSensor::read(float& pressure, float& temperature) {
     if (!_initialized) {
-        if (!begin()) return false;
+        // Asynchronously retry initialization every 1000ms to avoid blocking loop execution
+        if (millis() - _lastInitTime >= 1000) {
+            _lastInitTime = millis();
+            begin();
+        }
+        return false;
+    }
+    
+    // Asynchronously wait 50ms for first measurement to become ready after a successful init
+    if (millis() - _lastInitTime < 50) {
+        return false;
     }
     
     uint8_t rawData[6]; // [Pres_H, Pres_L, Pres_CRC, Temp_H, Temp_L, Temp_CRC]
     if (!_i2c.readRaw(_address, rawData, 6)) {
         _errorCount++;
         if (_errorCount > 15) {
-            _i2c.recoverBus();    // Clear any hardware bus lockouts
-            _initialized = false; // Force re-initialization on next read loop
+            _i2c.recoverBus();    // Clear hardware bus state
+            _initialized = false; // Schedule non-blocking re-init
             _errorCount = 0;
+            _lastInitTime = millis();
             Serial.printf("[SDP3x] Lost contact with sensor 0x%02X. Scheduling re-init.\n", _address);
         }
         return false;

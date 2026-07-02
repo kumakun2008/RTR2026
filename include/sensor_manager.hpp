@@ -133,6 +133,7 @@ private:
     float _scaleFactor; ///< LSB per Pascal
     float _zeroOffset;  ///< Dynamically calculated zero-offset (Pa)
     uint32_t _errorCount = 0;
+    uint32_t _lastInitTime = 0;
 };
 
 /**
