@@ -113,12 +113,13 @@ void setup() {
         Serial.println("[OK] CAN Bus Driver Active");
     }
 
+    SPI.begin(SPI_SCK_PIN, SPI_MISO_PIN, SPI_MOSI_PIN);
     tft.begin();
     tft.setRotation(1);
     tft.fillScreen(ILI9341_BLACK);
 
-    xTaskCreatePinnedToCore(taskCANReceive, "CANRxTask", 3072, NULL, 3, NULL, 1);
-    xTaskCreatePinnedToCore(taskUIDraw, "UIDrawTask", 4096, NULL, 1, NULL, 0);
+    xTaskCreatePinnedToCore(taskCANReceive, "CANRxTask", 4096, NULL, 3, NULL, 1);
+    xTaskCreatePinnedToCore(taskUIDraw, "UIDrawTask", 8192, NULL, 1, NULL, 0);
 
     Serial.println("--- Initialization Complete ---");
 }
@@ -255,7 +256,7 @@ void taskCANReceive(void* pvParameters) {
 void taskUIDraw(void* pvParameters) {
     TickType_t xLastWakeTime = xTaskGetTickCount();
     while (true) {
-        vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(100)); // 10Hz
+        vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(250)); // 4Hz (Prevents watchdogs and high bus overhead)
         
         tft.setCursor(0, 0);
         tft.setTextSize(2);
