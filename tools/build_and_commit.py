@@ -38,7 +38,13 @@ def main():
             results[env] = "SUCCESS"
         else:
             print(f"[FAILED] Build failed for {env}")
-            print(stderr)
+            try:
+                print(stderr)
+            except UnicodeEncodeError:
+                try:
+                    print(stderr.encode('utf-8', errors='replace').decode(sys.stdout.encoding, errors='replace'))
+                except Exception:
+                    print(stderr.encode('ascii', errors='replace').decode('ascii'))
             results[env] = "FAILED"
             success = False
 

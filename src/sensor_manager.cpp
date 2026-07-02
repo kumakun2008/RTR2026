@@ -216,6 +216,7 @@ bool SDP3xSensor::begin() {
         return false;
     }
     
+    delay(50); // Wait for the first measurement to become ready (takes 20-45ms)
     _errorCount = 0;
     _initialized = true;
     return true;
@@ -229,7 +230,8 @@ bool SDP3xSensor::read(float& pressure, float& temperature) {
     uint8_t rawData[6]; // [Pres_H, Pres_L, Pres_CRC, Temp_H, Temp_L, Temp_CRC]
     if (!_i2c.readRaw(_address, rawData, 6)) {
         _errorCount++;
-        if (_errorCount > 10) {
+        if (_errorCount > 15) {
+            _i2c.recoverBus();    // Clear any hardware bus lockouts
             _initialized = false; // Force re-initialization on next read loop
             _errorCount = 0;
             Serial.printf("[SDP3x] Lost contact with sensor 0x%02X. Scheduling re-init.\n", _address);
