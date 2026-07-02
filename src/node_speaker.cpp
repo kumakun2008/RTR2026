@@ -1,17 +1,13 @@
 #include <Arduino.h>
 #include <esp_task_wdt.h>
 #include "common_types.hpp"
-#include "i2c_manager.hpp"
 #include "can_manager.hpp"
 #include <WiFi.h>
 #include <ArduinoOTA.h>
 
-#define I2C_SDA_PIN 21
-#define I2C_SCL_PIN 22
 #define CAN_TX_PIN 16
 #define CAN_RX_PIN 17
 
-I2CManager i2cBus(Wire, I2C_SDA_PIN, I2C_SCL_PIN, 400000);
 CANManager canBus;
 
 volatile bool alertLowBattery = false;
@@ -64,10 +60,6 @@ void setup() {
     delay(1000);
     Serial.println("--- RTR2026 Avionics Initialization ---");
     Serial.println("Running: RTR_Speaker_Board Configuration");
-
-    if (i2cBus.begin()) {
-        Serial.println("[OK] I2C Manager Active");
-    }
 
     if (canBus.begin(CAN_TX_PIN, CAN_RX_PIN)) {
         Serial.println("[OK] CAN Bus Driver Active");
