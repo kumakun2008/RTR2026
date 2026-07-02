@@ -15,9 +15,9 @@
 #define TFT_CS   5
 #define TFT_DC   17
 #define TFT_RST  16
-#define SPI_SCK_PIN 14
-#define SPI_MISO_PIN 33
-#define SPI_MOSI_PIN 13
+#define SPI_SCK_PIN 18
+#define SPI_MISO_PIN 19
+#define SPI_MOSI_PIN 23
 #define SD_CS_PIN 15
 #define BUTTON_PAGE_PIN 12 
 
