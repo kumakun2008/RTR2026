@@ -213,6 +213,21 @@ bool SDP3xSensor::begin() {
     return true;
 }
 
+static bool checkSDP3xCRC(const uint8_t* data, uint8_t count, uint8_t crcRef) {
+    uint8_t crc = 0xFF;
+    for (uint8_t i = 0; i < count; i++) {
+        crc ^= data[i];
+        for (uint8_t bit = 8; bit > 0; --bit) {
+            if (crc & 0x80) {
+                crc = (crc << 1) ^ 0x31;
+            } else {
+                crc = (crc << 1);
+            }
+        }
+    }
+    return (crc == crcRef);
+}
+
 bool SDP3xSensor::read(float& pressure, float& temperature) {
     if (!_initialized) {
         // Asynchronously retry initialization every 1000ms to avoid blocking loop execution
@@ -237,6 +252,27 @@ bool SDP3xSensor::read(float& pressure, float& temperature) {
             _errorCount = 0;
             _lastInitTime = millis();
             Serial.printf("[SDP3x] Lost contact with sensor 0x%02X. Scheduling re-init.\n", _address);
+        }
+        return false;
+    }
+
+    // Output raw hex values to serial at 1Hz for diagnostics
+    static uint32_t lastDbg = 0;
+    if (millis() - lastDbg >= 1000) {
+        lastDbg = millis();
+        Serial.printf("[SDP3x Debug 0x%02X] Raw Hex: %02X %02X %02X %02X %02X %02X\n", 
+                      _address, rawData[0], rawData[1], rawData[2], rawData[3], rawData[4], rawData[5]);
+    }
+
+    // Verify CRC for pressure and temperature packages
+    if (!checkSDP3xCRC(&rawData[0], 2, rawData[2]) || !checkSDP3xCRC(&rawData[3], 2, rawData[5])) {
+        _errorCount++;
+        if (_errorCount > 15) {
+            _i2c.recoverBus();
+            _initialized = false;
+            _errorCount = 0;
+            _lastInitTime = millis();
+            Serial.printf("[SDP3x] CRC error limit reached at 0x%02X. Scheduling re-init.\n", _address);
         }
         return false;
     }
