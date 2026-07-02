@@ -46,7 +46,6 @@ void setup() {
         Serial.println("[OK] CAN Bus Driver Active");
     } else {
         Serial.println("[ERROR] CAN Bus Initialization Failed!");
-        // ※ ハードウェアのPA2/PA3->PA11/PA12配線修正が必須
     }
 
     rudderIMU.begin();
@@ -70,12 +69,16 @@ void loop() {
         lastRead = millis();
         
         IMUPayload imuData;
-        float pitch = 0.0f;
-        float roll = 0.0f;
         if (rudderIMU.read(imuData)) {
-            pitch = atan2(-imuData.accel_x, sqrt(imuData.accel_y * imuData.accel_y + imuData.accel_z * imuData.accel_z)) * 180.0f / PI;
-            roll = atan2(imuData.accel_y, imuData.accel_z) * 180.0f / PI;
-            canBus.transmitAttitude(pitch, roll);
+            // Acc X, Y, Z
+            canBus.transmitScaled(CAN_ID_RUDDER_ACC_X, imuData.accel_x, CAN_Scale::ACCEL);
+            canBus.transmitScaled(CAN_ID_RUDDER_ACC_Y, imuData.accel_y, CAN_Scale::ACCEL);
+            canBus.transmitScaled(CAN_ID_RUDDER_ACC_Z, imuData.accel_z, CAN_Scale::ACCEL);
+            
+            // Gyro X, Y, Z
+            canBus.transmitScaled(CAN_ID_RUDDER_GYRO_X, imuData.gyro_x, CAN_Scale::GYRO);
+            canBus.transmitScaled(CAN_ID_RUDDER_GYRO_Y, imuData.gyro_y, CAN_Scale::GYRO);
+            canBus.transmitScaled(CAN_ID_RUDDER_GYRO_Z, imuData.gyro_z, CAN_Scale::GYRO);
         }
         
         uint8_t angleBytes[2];
@@ -84,6 +87,6 @@ void loop() {
             rawRudderAngle = (float)rawAngle * (360.0f / 4096.0f);
         }
 
-        canBus.transmitRudderAngle(rawRudderAngle);
+        canBus.transmitScaled(CAN_ID_RUDDER_ANGLE, rawRudderAngle, CAN_Scale::ANGLE);
     }
 }

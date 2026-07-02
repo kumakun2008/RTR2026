@@ -25,7 +25,6 @@ I2CManager i2cBus(Wire, I2C_SDA_PIN, I2C_SCL_PIN, 400000);
 CANManager canBus;
 Adafruit_ILI9341 tft(TFT_CS, TFT_DC, TFT_RST);
 
-volatile int displayPage = 0;
 volatile bool isOtaMode = false;
 uint32_t otaTimeoutStart = 0;
 
@@ -50,6 +49,16 @@ struct DisplayTelemetry {
     float altLidar = 0.0f;
     float altUS = 0.0f;
     float rudderAngle = 0.0f;
+    
+    // Status flags
+    bool has_batteryVolt = false;
+    bool has_pitotPress32 = false;
+    bool has_altLidar = false;
+    bool has_altUS = false;
+    bool has_gyro = false;
+    bool has_rudderAngle = false;
+    bool has_gpsPos = false;
+    bool has_gpsAlt = false;
 } flightData;
 
 void taskCANReceive(void* pvParameters);
@@ -107,9 +116,7 @@ void setup() {
     tft.begin();
     tft.setRotation(1);
     tft.fillScreen(ILI9341_BLACK);
-    tft.println("RTR2026 Display Active");
 
-    pinMode(BUTTON_PAGE_PIN, INPUT_PULLUP);
     xTaskCreatePinnedToCore(taskCANReceive, "CANRxTask", 3072, NULL, 3, NULL, 1);
     xTaskCreatePinnedToCore(taskUIDraw, "UIDrawTask", 4096, NULL, 1, NULL, 0);
 
@@ -124,6 +131,11 @@ void taskCANReceive(void* pvParameters) {
     uint32_t rxId = 0;
     uint8_t rxData[8];
     uint8_t rxDlc = 0;
+
+    static uint64_t gpsLatRaw = 0;
+    static uint64_t gpsLonRaw = 0;
+    static bool updateGPSLat = false;
+    static bool updateGPSLon = false;
 
     while (true) {
         if (isOtaMode) {
@@ -144,39 +156,94 @@ void taskCANReceive(void* pvParameters) {
                 isOtaMode = true;
                 continue;
             }
-            if (rxId == CAN_ID_ATTITUDE && rxDlc >= 8) {
-                memcpy(&flightData.gyro[0], rxData, 4); // Pitch
-                memcpy(&flightData.gyro[1], rxData + 4, 4); // Roll
+            
+            auto getFloat = [&](const uint8_t* d, float scale) {
+                int32_t raw;
+                memcpy(&raw, d, 4);
+                return (float)raw / scale;
+            };
+
+            if (rxId == CAN_ID_PITOT_AIRSPEED) {
+                flightData.pitotPress32 = getFloat(rxData, CAN_Scale::GPS_SPEED);
+                flightData.has_pitotPress32 = true;
             }
-            else if (rxId == CAN_ID_AIRSPEED && rxDlc >= 8) {
-                memcpy(&flightData.pitotPress32, rxData, 4);
-                memcpy(&flightData.gpsSpeed, rxData + 4, 4); // Airspeed
+            else if (rxId == CAN_ID_PITOT_AOA) {
+                flightData.pitotPress31_1 = getFloat(rxData, CAN_Scale::PRESSURE);
             }
-            else if (rxId == CAN_ID_RUDDER_ANGLE && rxDlc >= 4) {
-                memcpy(&flightData.rudderAngle, rxData, 4);
+            else if (rxId == CAN_ID_PITOT_AOS) {
+                flightData.pitotPress31_2 = getFloat(rxData, CAN_Scale::PRESSURE);
             }
-            else if (rxId == CAN_ID_ALTITUDE && rxDlc >= 8) {
-                float val1, val2;
-                memcpy(&val1, rxData, 4);
-                memcpy(&val2, rxData + 4, 4);
-                if (val2 > 0.001f) {
-                    flightData.altLidar = val1;
-                    flightData.altUS = val2;
-                } else {
-                    flightData.baroPress = val1 / 100.0f; // Pa to hPa
-                }
+            else if (rxId == CAN_ID_PITOT_PITCH) {
+                flightData.gyro[0] = getFloat(rxData, CAN_Scale::ANGLE);
+                flightData.has_gyro = true;
             }
-            else if (rxId == CAN_ID_GPS_POS && rxDlc >= 8) {
-                int32_t latVal, lonVal;
-                memcpy(&latVal, rxData, 4);
-                memcpy(&lonVal, rxData + 4, 4);
-                flightData.gpsLat = (double)latVal / CAN_Scale::GPS_DEG;
-                flightData.gpsLon = (double)lonVal / CAN_Scale::GPS_DEG;
-                flightData.gpsSats = 8;
-                flightData.gpsFix = 2;
+            else if (rxId == CAN_ID_PITOT_ROLL) {
+                flightData.gyro[1] = getFloat(rxData, CAN_Scale::ANGLE);
+                flightData.has_gyro = true;
             }
-            else if (rxId == CAN_ID_BATTERY_VOLT && rxDlc >= 4) {
-                memcpy(&flightData.batteryVolt, rxData, 4);
+            else if (rxId == CAN_ID_RUDDER_ANGLE) {
+                flightData.rudderAngle = getFloat(rxData, CAN_Scale::ANGLE);
+                flightData.has_rudderAngle = true;
+            }
+            else if (rxId == CAN_ID_ALT_US) {
+                flightData.altUS = getFloat(rxData, CAN_Scale::DISTANCE);
+                flightData.has_altUS = true;
+            }
+            else if (rxId == CAN_ID_ALT_LIDAR) {
+                flightData.altLidar = getFloat(rxData, CAN_Scale::DISTANCE);
+                flightData.has_altLidar = true;
+            }
+            else if (rxId == CAN_ID_GPS_LAT_UPPER) {
+                uint32_t upper;
+                memcpy(&upper, rxData, 4);
+                gpsLatRaw = ((uint64_t)upper << 32) | (gpsLatRaw & 0xFFFFFFFF);
+                updateGPSLat = true;
+            }
+            else if (rxId == CAN_ID_GPS_LAT_LOWER) {
+                uint32_t lower;
+                memcpy(&lower, rxData, 4);
+                gpsLatRaw = (gpsLatRaw & 0xFFFFFFFF00000000ULL) | lower;
+                updateGPSLat = true;
+            }
+            else if (rxId == CAN_ID_GPS_LON_UPPER) {
+                uint32_t upper;
+                memcpy(&upper, rxData, 4);
+                gpsLonRaw = ((uint64_t)upper << 32) | (gpsLonRaw & 0xFFFFFFFF);
+                updateGPSLon = true;
+            }
+            else if (rxId == CAN_ID_GPS_LON_LOWER) {
+                uint32_t lower;
+                memcpy(&lower, rxData, 4);
+                gpsLonRaw = (gpsLonRaw & 0xFFFFFFFF00000000ULL) | lower;
+                updateGPSLon = true;
+            }
+            else if (rxId == CAN_ID_GPS_ALT) {
+                flightData.gpsAlt = getFloat(rxData, CAN_Scale::GPS_ALT);
+                flightData.has_gpsAlt = true;
+            }
+            else if (rxId == CAN_ID_GPS_SPEED) {
+                flightData.gpsSpeed = getFloat(rxData, CAN_Scale::GPS_SPEED);
+            }
+            else if (rxId == CAN_ID_GPS_AZIMUTH) {
+                flightData.gpsHeading = (uint16_t)(getFloat(rxData, CAN_Scale::GPS_AZIMUTH));
+            }
+            else if (rxId == CAN_ID_BATTERY_VOLT) {
+                flightData.batteryVolt = getFloat(rxData, CAN_Scale::BATTERY);
+                flightData.has_batteryVolt = true;
+            }
+            else if (rxId == CAN_ID_MAIN_PRESS) {
+                flightData.baroPress = getFloat(rxData, CAN_Scale::PRESSURE) / 100.0f;
+            }
+            
+            if (updateGPSLat) {
+                memcpy(&flightData.gpsLat, &gpsLatRaw, 8);
+                updateGPSLat = false;
+                flightData.has_gpsPos = true;
+            }
+            if (updateGPSLon) {
+                memcpy(&flightData.gpsLon, &gpsLonRaw, 8);
+                updateGPSLon = false;
+                flightData.has_gpsPos = true;
             }
         }
         vTaskDelay(pdMS_TO_TICKS(1));
@@ -186,47 +253,73 @@ void taskCANReceive(void* pvParameters) {
 void taskUIDraw(void* pvParameters) {
     TickType_t xLastWakeTime = xTaskGetTickCount();
     while (true) {
-        vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(66)); // 15Hz
-        
-        if (digitalRead(BUTTON_PAGE_PIN) == LOW) {
-            displayPage = (displayPage + 1) % 3;
-            tft.fillScreen(ILI9341_BLACK);
-            vTaskDelay(pdMS_TO_TICKS(200));
-        }
+        vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(100)); // 10Hz
         
         tft.setCursor(0, 0);
         tft.setTextSize(2);
         
-        if (displayPage == 0) {
-            tft.setTextColor(ILI9341_GREEN);
-            tft.println("=== RTR DASHBOARD ===");
-            tft.setTextColor(ILI9341_WHITE);
-            float pressPa = flightData.pitotPress32;
-            float airspeed = (pressPa > 0.0f) ? sqrt(2.0f * pressPa / 1.225f) : 0.0f;
-            
-            tft.printf("Battery : %.2f V\n", flightData.batteryVolt);
-            tft.printf("Airspeed: %.2f m/s\n", airspeed);
-            tft.printf("LidarAlt: %.2f m\n", flightData.altLidar);
-            tft.printf("US Alt  : %.2f m\n", flightData.altUS);
-            tft.printf("GPS Sat : %d (Fix:%d)\n", flightData.gpsSats, flightData.gpsFix);
-        } 
-        else if (displayPage == 1) {
-            tft.setTextColor(ILI9341_CYAN);
-            tft.println("=== MOTION STATUS ===");
-            tft.setTextColor(ILI9341_WHITE);
-            tft.printf("Pitch : %+5.1f deg\n", flightData.gyro[0]);
-            tft.printf("Roll  : %+5.1f deg\n", flightData.gyro[1]);
-            tft.printf("Rudder: %+5.2f deg\n", flightData.rudderAngle);
+        tft.setTextColor(ILI9341_GREEN, ILI9341_BLACK);
+        tft.println("=== RTR FLIGHT DATA ===");
+        tft.println("");
+        
+        tft.setTextColor(ILI9341_WHITE, ILI9341_BLACK);
+        
+        // Battery
+        if (flightData.has_batteryVolt) {
+            tft.printf("Battery : %5.2f V    \n", flightData.batteryVolt);
+        } else {
+            tft.println("Battery : No Data    ");
         }
-        else {
-            tft.setTextColor(ILI9341_YELLOW);
-            tft.println("=== GPS POSITION ===");
-            tft.setTextColor(ILI9341_WHITE);
-            tft.printf("Lat : %.6f deg\n", flightData.gpsLat);
-            tft.printf("Lon : %.6f deg\n", flightData.gpsLon);
-            tft.printf("Alt : %.2f m\n", flightData.gpsAlt);
-            tft.printf("Temp: %.2f C\n", flightData.baroTemp);
-            tft.printf("Press: %.2f hPa\n", flightData.baroPress);
+        
+        // Airspeed
+        if (flightData.has_pitotPress32) {
+            tft.printf("Airspeed: %5.2f m/s  \n", flightData.pitotPress32);
+        } else {
+            tft.println("Airspeed: No Data    ");
+        }
+        
+        // Altitude (LiDAR and Ultrasonic)
+        if (flightData.has_altLidar) {
+            tft.printf("LidarAlt: %5.2f m    \n", flightData.altLidar);
+        } else {
+            tft.println("LidarAlt: No Data    ");
+        }
+        
+        if (flightData.has_altUS) {
+            tft.printf("US Alt  : %5.2f m    \n", flightData.altUS);
+        } else {
+            tft.println("US Alt  : No Data    ");
+        }
+        
+        // Motion (Pitch/Roll)
+        if (flightData.has_gyro) {
+            tft.printf("Pitch   : %+5.1f deg  \n", flightData.gyro[0]);
+            tft.printf("Roll    : %+5.1f deg  \n", flightData.gyro[1]);
+        } else {
+            tft.println("Pitch   : No Data    ");
+            tft.println("Roll    : No Data    ");
+        }
+        
+        // Rudder Angle
+        if (flightData.has_rudderAngle) {
+            tft.printf("Rudder  : %+5.2f deg  \n", flightData.rudderAngle);
+        } else {
+            tft.println("Rudder  : No Data    ");
+        }
+        
+        // GPS Positions
+        if (flightData.has_gpsPos) {
+            tft.printf("Lat     : %10.6f   \n", flightData.gpsLat);
+            tft.printf("Lon     : %10.6f   \n", flightData.gpsLon);
+        } else {
+            tft.println("Lat     : No Data    ");
+            tft.println("Lon     : No Data    ");
+        }
+        
+        if (flightData.has_gpsAlt) {
+            tft.printf("GPS Alt : %5.2f m    \n", flightData.gpsAlt);
+        } else {
+            tft.println("GPS Alt : No Data    ");
         }
     }
 }

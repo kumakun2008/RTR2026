@@ -136,19 +136,27 @@ void taskSensorAcquisition(void* pvParameters) {
         IMUPayload imuData;
         if (mainIMU.read(imuData)) {
             sdLogger.logPacket(LOG_ID_MAIN_IMU, &imuData, sizeof(imuData), timestamp);
-            float pitch = atan2(-imuData.accel_x, sqrt(imuData.accel_y * imuData.accel_y + imuData.accel_z * imuData.accel_z)) * 180.0f / PI;
-            float roll = atan2(imuData.accel_y, imuData.accel_z) * 180.0f / PI;
-            canBus.transmitAttitude(pitch, roll);
+            canBus.transmitScaled(CAN_ID_MAIN_ACC_X, imuData.accel_x, CAN_Scale::ACCEL);
+            canBus.transmitScaled(CAN_ID_MAIN_ACC_Y, imuData.accel_y, CAN_Scale::ACCEL);
+            canBus.transmitScaled(CAN_ID_MAIN_ACC_Z, imuData.accel_z, CAN_Scale::ACCEL);
+            canBus.transmitScaled(CAN_ID_MAIN_GYRO_X, imuData.gyro_x, CAN_Scale::GYRO);
+            canBus.transmitScaled(CAN_ID_MAIN_GYRO_Y, imuData.gyro_y, CAN_Scale::GYRO);
+            canBus.transmitScaled(CAN_ID_MAIN_GYRO_Z, imuData.gyro_z, CAN_Scale::GYRO);
         }
         MagPayload magData;
         if (mainMag.read(magData)) {
             sdLogger.logPacket(LOG_ID_MAIN_MAG, &magData, sizeof(magData), timestamp);
+            canBus.transmitScaled(CAN_ID_MAIN_MAG_X, magData.mag_x, CAN_Scale::MAG);
+            canBus.transmitScaled(CAN_ID_MAIN_MAG_Y, magData.mag_y, CAN_Scale::MAG);
+            canBus.transmitScaled(CAN_ID_MAIN_MAG_Z, magData.mag_z, CAN_Scale::MAG);
         }
         if (loopCounter % 4 != 0) {
             BaroPayload baroData;
             if (mainBaro.read(baroData)) {
                 sdLogger.logPacket(LOG_ID_MAIN_BARO, &baroData, sizeof(baroData), timestamp);
-                canBus.transmitAltitude(baroData.pressure * 100.0f, 0.0f, false);
+                // Pa に変換して送信
+                canBus.transmitScaled(CAN_ID_MAIN_PRESS, baroData.pressure * 100.0f, CAN_Scale::PRESSURE);
+                canBus.transmitScaled(CAN_ID_MAIN_TEMP, baroData.temperature, CAN_Scale::TEMP);
             }
         }
         loopCounter++;
@@ -159,6 +167,11 @@ void taskCANReceive(void* pvParameters) {
     uint32_t rxId = 0;
     uint8_t rxData[8];
     uint8_t rxDlc = 0;
+
+    static uint64_t gpsLatRaw = 0;
+    static uint64_t gpsLonRaw = 0;
+    static bool updateGPSLat = false;
+    static bool updateGPSLon = false;
 
     while (true) {
         if (isOtaMode) {
@@ -181,10 +194,78 @@ void taskCANReceive(void* pvParameters) {
             }
             uint64_t timestamp = timeSync.getAbsoluteTimeUs();
             
-            if (rxId == CAN_ID_AIRSPEED) {
-                memcpy(&flightData.pitotPress32, rxData, 4);
-                memcpy(&flightData.gpsSpeed, rxData + 4, 4);
-                
+            auto getFloat = [&](const uint8_t* d, float scale) {
+                int32_t raw;
+                memcpy(&raw, d, 4);
+                return (float)raw / scale;
+            };
+
+            if (rxId == CAN_ID_PITOT_AIRSPEED) {
+                flightData.pitotPress32 = getFloat(rxData, CAN_Scale::PRESSURE);
+            }
+            else if (rxId == CAN_ID_PITOT_AOA) {
+                flightData.pitotPress31_1 = getFloat(rxData, CAN_Scale::PRESSURE);
+            }
+            else if (rxId == CAN_ID_PITOT_AOS) {
+                flightData.pitotPress31_2 = getFloat(rxData, CAN_Scale::PRESSURE);
+            }
+            else if (rxId == CAN_ID_PITOT_TEMP) {
+                flightData.pitotTemp32 = getFloat(rxData, CAN_Scale::TEMP);
+            }
+            else if (rxId == CAN_ID_RUDDER_ANGLE) {
+                flightData.rudderAngle = getFloat(rxData, CAN_Scale::ANGLE);
+            }
+            else if (rxId == CAN_ID_ALT_US) {
+                flightData.altUS = getFloat(rxData, CAN_Scale::DISTANCE);
+            }
+            else if (rxId == CAN_ID_ALT_LIDAR) {
+                flightData.altLidar = getFloat(rxData, CAN_Scale::DISTANCE);
+            }
+            else if (rxId == CAN_ID_GPS_LAT_UPPER) {
+                uint32_t upper;
+                memcpy(&upper, rxData, 4);
+                gpsLatRaw = ((uint64_t)upper << 32) | (gpsLatRaw & 0xFFFFFFFF);
+                updateGPSLat = true;
+            }
+            else if (rxId == CAN_ID_GPS_LAT_LOWER) {
+                uint32_t lower;
+                memcpy(&lower, rxData, 4);
+                gpsLatRaw = (gpsLatRaw & 0xFFFFFFFF00000000ULL) | lower;
+                updateGPSLat = true;
+            }
+            else if (rxId == CAN_ID_GPS_LON_UPPER) {
+                uint32_t upper;
+                memcpy(&upper, rxData, 4);
+                gpsLonRaw = ((uint64_t)upper << 32) | (gpsLonRaw & 0xFFFFFFFF);
+                updateGPSLon = true;
+            }
+            else if (rxId == CAN_ID_GPS_LON_LOWER) {
+                uint32_t lower;
+                memcpy(&lower, rxData, 4);
+                gpsLonRaw = (gpsLonRaw & 0xFFFFFFFF00000000ULL) | lower;
+                updateGPSLon = true;
+            }
+            else if (rxId == CAN_ID_GPS_ALT) {
+                flightData.gpsAlt = getFloat(rxData, CAN_Scale::GPS_ALT);
+            }
+            else if (rxId == CAN_ID_GPS_SPEED) {
+                flightData.gpsSpeed = getFloat(rxData, CAN_Scale::GPS_SPEED);
+            }
+            else if (rxId == CAN_ID_GPS_AZIMUTH) {
+                flightData.gpsHeading = (uint16_t)(getFloat(rxData, CAN_Scale::GPS_AZIMUTH));
+            }
+            
+            if (updateGPSLat) {
+                memcpy(&flightData.gpsLat, &gpsLatRaw, 8);
+                updateGPSLat = false;
+            }
+            if (updateGPSLon) {
+                memcpy(&flightData.gpsLon, &gpsLonRaw, 8);
+                updateGPSLon = false;
+            }
+
+            // Central Blackbox SD Logging
+            if (rxId == CAN_ID_PITOT_AIRSPEED || rxId == CAN_ID_PITOT_TEMP) {
                 PitotPayload pPayload = {
                     flightData.pitotPress32,
                     flightData.pitotPress31_1,
@@ -193,21 +274,11 @@ void taskCANReceive(void* pvParameters) {
                 };
                 sdLogger.logPacket(LOG_ID_PITOT_DATA, &pPayload, sizeof(pPayload), timestamp);
             }
-            else if (rxId == CAN_ID_AOA_AOS) {
-                memcpy(&flightData.pitotPress31_1, rxData, 4);
-                memcpy(&flightData.pitotPress31_2, rxData + 4, 4);
-            }
-            else if (rxId == CAN_ID_GPS_POS) {
-                int32_t latVal, lonVal;
-                memcpy(&latVal, rxData, 4);
-                memcpy(&lonVal, rxData + 4, 4);
-                flightData.gpsLat = (double)latVal / CAN_Scale::GPS_DEG;
-                flightData.gpsLon = (double)lonVal / CAN_Scale::GPS_DEG;
-                
+            else if (rxId == CAN_ID_GPS_LAT_LOWER || rxId == CAN_ID_GPS_LON_LOWER) {
                 GPSPayload gPayload = {
                     flightData.gpsLat,
                     flightData.gpsLon,
-                    0.0f,
+                    flightData.gpsAlt,
                     flightData.gpsSpeed,
                     flightData.gpsSats,
                     flightData.gpsFix,
@@ -215,10 +286,7 @@ void taskCANReceive(void* pvParameters) {
                 };
                 sdLogger.logPacket(LOG_ID_GPS, &gPayload, sizeof(gPayload), timestamp);
             }
-            else if (rxId == CAN_ID_ALTITUDE) {
-                memcpy(&flightData.altLidar, rxData, 4);
-                memcpy(&flightData.altUS, rxData + 4, 4);
-                
+            else if (rxId == CAN_ID_ALT_LIDAR || rxId == CAN_ID_ALT_US) {
                 AltimeterPayload aPayload = {
                     flightData.altUS,
                     flightData.altLidar
@@ -226,8 +294,6 @@ void taskCANReceive(void* pvParameters) {
                 sdLogger.logPacket(LOG_ID_ALTIMETER, &aPayload, sizeof(aPayload), timestamp);
             }
             else if (rxId == CAN_ID_RUDDER_ANGLE) {
-                memcpy(&flightData.rudderAngle, rxData, 4);
-                
                 RudderPayload rPayload = {
                     flightData.rudderAngle,
                     0.0f
@@ -257,7 +323,9 @@ void taskBatteryVoltage(void* pvParameters) {
         uint64_t timestamp = timeSync.getAbsoluteTimeUs();
         BatteryPayload batPayload = { cellVoltage, 0.0f };
         sdLogger.logPacket(LOG_ID_BATTERY, &batPayload, sizeof(batPayload), timestamp);
-        canBus.transmitBattery(cellVoltage);
+        
+        canBus.transmitScaled(CAN_ID_BATTERY_VOLT, cellVoltage, CAN_Scale::BATTERY);
+        canBus.transmitInt32(CAN_ID_SD_STATUS, sdLogger.isActive() ? 1 : 0);
         
         if (cellVoltage < 7.0f) {
             canBus.transmitVoiceCmd(ALERT_LOW_BATTERY);
@@ -274,6 +342,7 @@ void taskTelemetry(void* pvParameters) {
             telemetry.handleOTA();
         } else {
             telemetry.process();
+            
             char stateStr[128];
             snprintf(stateStr, sizeof(stateStr), 
                      "$TEL,%.2f,%.2f,%.2f,%d*", 

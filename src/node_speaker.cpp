@@ -100,6 +100,13 @@ void taskCANReceive(void* pvParameters) {
                 isOtaMode = true;
                 continue;
             }
+            
+            auto getFloat = [&](const uint8_t* d, float scale) {
+                int32_t raw;
+                memcpy(&raw, d, 4);
+                return (float)raw / scale;
+            };
+
             if (rxId == CAN_ID_VOICE_CMD && rxDlc >= 1) {
                 uint8_t alertCode = rxData[0];
                 if (alertCode == ALERT_CALIB_START) {
@@ -115,9 +122,8 @@ void taskCANReceive(void* pvParameters) {
                     alertLowAltitude = true;
                 }
             }
-            else if (rxId == CAN_ID_ALTITUDE && rxDlc >= 8) {
-                float currentAlt;
-                memcpy(&currentAlt, rxData, 4); // LiDAR is first float in Altimeter payload
+            else if (rxId == CAN_ID_ALT_LIDAR && rxDlc >= 4) {
+                float currentAlt = getFloat(rxData, CAN_Scale::DISTANCE);
                 if (currentAlt > 0.1f && currentAlt < 5.0f) {
                     alertLowAltitude = true;
                 }

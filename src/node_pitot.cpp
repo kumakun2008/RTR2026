@@ -141,19 +141,24 @@ void taskSensorAcquisition(void* pvParameters) {
             PitotPayload pitotData = { press32, press31_1, press31_2, temp32 };
             sdLogger.logPacket(LOG_ID_PITOT_DATA, &pitotData, sizeof(pitotData), timestamp);
             
+            // Broadcastdynamic pressure and calculated airspeed on CAN
             float airspeed = (press32 > 0.0f) ? sqrt(2.0f * press32 / 1.225f) : 0.0f;
-            canBus.transmitAirspeed(press32, airspeed);
-            canBus.transmitAoaAos(press31_1, press31_2);
+            canBus.transmitScaled(CAN_ID_PITOT_AIRSPEED, airspeed, CAN_Scale::GPS_SPEED);
+            canBus.transmitScaled(CAN_ID_PITOT_AOA, press31_1, CAN_Scale::PRESSURE);
+            canBus.transmitScaled(CAN_ID_PITOT_AOS, press31_2, CAN_Scale::PRESSURE);
         }
 
         float roll = 0, pitch = 0, yaw = 0;
         if (pitotIMU.read(roll, pitch, yaw)) {
-            // Read Pitot IMU (locally logged or processed if needed)
+            canBus.transmitScaled(CAN_ID_PITOT_PITCH, pitch, CAN_Scale::ANGLE);
+            canBus.transmitScaled(CAN_ID_PITOT_ROLL, roll, CAN_Scale::ANGLE);
+            canBus.transmitScaled(CAN_ID_PITOT_YAW, yaw, CAN_Scale::ANGLE);
         }
 
         float hum = 0, tempSHT = 0;
         if (pitotSHT.read(tempSHT, hum)) {
-            // Read Pitot SHT Env (locally logged or processed if needed)
+            canBus.transmitScaled(CAN_ID_PITOT_TEMP, tempSHT, CAN_Scale::TEMP);
+            canBus.transmitScaled(CAN_ID_PITOT_HUMID, hum, CAN_Scale::HUMIDITY);
         }
 
         loopCounter++;

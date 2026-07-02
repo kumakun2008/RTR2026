@@ -83,59 +83,33 @@ bool CANManager::receiveRaw(uint32_t& id, uint8_t* data, uint8_t& dlc, uint32_t 
 
 // --- Telemetry Transmissions (ESP32) ---
 
-bool CANManager::transmitAttitude(float pitch, float roll) {
-    uint8_t data[8];
-    memcpy(data, &pitch, 4);
-    memcpy(data + 4, &roll, 4);
-    return transmitRaw(CAN_ID_ATTITUDE, data, 8);
-}
-
-bool CANManager::transmitAirspeed(float pressPa, float airspeed) {
-    uint8_t data[8];
-    memcpy(data, &pressPa, 4);
-    memcpy(data + 4, &airspeed, 4);
-    return transmitRaw(CAN_ID_AIRSPEED, data, 8);
-}
-
-bool CANManager::transmitRudderAngle(float angle) {
+bool CANManager::transmitScaled(uint32_t id, float value, float scale) {
+    int32_t val = (int32_t)(value * scale);
     uint8_t data[4];
-    memcpy(data, &angle, 4);
-    return transmitRaw(CAN_ID_RUDDER_ANGLE, data, 4);
+    memcpy(data, &val, 4);
+    return transmitRaw(id, data, 4);
 }
 
-bool CANManager::transmitAltitude(float staticPressOrLidar, float ultrasonic, bool isAltimeterNode) {
-    uint8_t data[8];
-    if (isAltimeterNode) {
-        memcpy(data, &staticPressOrLidar, 4);
-        memcpy(data + 4, &ultrasonic, 4);
-    } else {
-        memcpy(data, &staticPressOrLidar, 4);
-        float zero = 0.0f;
-        memcpy(data + 4, &zero, 4);
-    }
-    return transmitRaw(CAN_ID_ALTITUDE, data, 8);
-}
-
-bool CANManager::transmitGPSPos(double lat, double lon) {
-    int32_t latVal = (int32_t)(lat * CAN_Scale::GPS_DEG);
-    int32_t lonVal = (int32_t)(lon * CAN_Scale::GPS_DEG);
-    uint8_t data[8];
-    memcpy(data, &latVal, 4);
-    memcpy(data + 4, &lonVal, 4);
-    return transmitRaw(CAN_ID_GPS_POS, data, 8);
-}
-
-bool CANManager::transmitAoaAos(float press1, float press2) {
-    uint8_t data[8];
-    memcpy(data, &press1, 4);
-    memcpy(data + 4, &press2, 4);
-    return transmitRaw(CAN_ID_AOA_AOS, data, 8);
-}
-
-bool CANManager::transmitBattery(float busVolt) {
+bool CANManager::transmitInt32(uint32_t id, int32_t value) {
     uint8_t data[4];
-    memcpy(data, &busVolt, 4);
-    return transmitRaw(CAN_ID_BATTERY_VOLT, data, 4);
+    memcpy(data, &value, 4);
+    return transmitRaw(id, data, 4);
+}
+
+bool CANManager::transmitDoubleSplit(uint32_t idUpper, uint32_t idLower, double value) {
+    uint64_t binVal;
+    memcpy(&binVal, &value, 8);
+    uint32_t upper = (uint32_t)(binVal >> 32);
+    uint32_t lower = (uint32_t)(binVal & 0xFFFFFFFF);
+    
+    uint8_t dataUpper[4];
+    uint8_t dataLower[4];
+    memcpy(dataUpper, &upper, 4);
+    memcpy(dataLower, &lower, 4);
+    
+    bool okUpper = transmitRaw(idUpper, dataUpper, 4);
+    bool okLower = transmitRaw(idLower, dataLower, 4);
+    return okUpper && okLower;
 }
 
 bool CANManager::transmitVoiceCmd(uint8_t alertCode) {
@@ -158,13 +132,10 @@ bool CANManager::begin(int txPin, int rxPin) { _initialized = true; return true;
 void CANManager::end() { _initialized = false; }
 bool CANManager::transmitRaw(uint32_t id, const uint8_t* data, uint8_t dlc) { return true; }
 bool CANManager::receiveRaw(uint32_t& id, uint8_t* data, uint8_t& dlc, uint32_t timeoutMs) { return false; }
-bool CANManager::transmitAttitude(float pitch, float roll) { return true; }
-bool CANManager::transmitAirspeed(float pressPa, float airspeed) { return true; }
-bool CANManager::transmitRudderAngle(float angle) { return true; }
-bool CANManager::transmitAltitude(float staticPressOrLidar, float ultrasonic, bool isAltimeterNode) { return true; }
-bool CANManager::transmitGPSPos(double lat, double lon) { return true; }
-bool CANManager::transmitAoaAos(float press1, float press2) { return true; }
-bool CANManager::transmitBattery(float busVolt) { return true; }
+
+bool CANManager::transmitScaled(uint32_t id, float value, float scale) { return true; }
+bool CANManager::transmitInt32(uint32_t id, int32_t value) { return true; }
+bool CANManager::transmitDoubleSplit(uint32_t idUpper, uint32_t idLower, double value) { return true; }
 bool CANManager::transmitVoiceCmd(uint8_t alertCode) { return true; }
 bool CANManager::transmitCalibZero() { return true; }
 bool CANManager::transmitOtaStart() { return true; }

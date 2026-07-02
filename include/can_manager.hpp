@@ -46,13 +46,11 @@ public:
     bool receiveRaw(uint32_t& id, uint8_t* data, uint8_t& dlc, uint32_t timeoutMs = 10);
 
     // --- Telemetry Transmissions (Aligned with new CAN ID specification) ---
-    bool transmitAttitude(float pitch, float roll);
-    bool transmitAirspeed(float pressPa, float airspeed);
-    bool transmitRudderAngle(float angle);
-    bool transmitAltitude(float staticPressOrLidar, float ultrasonic = 0.0f, bool isAltimeterNode = false);
-    bool transmitGPSPos(double lat, double lon);
-    bool transmitAoaAos(float press1, float press2);
-    bool transmitBattery(float busVolt);
+    bool transmitScaled(uint32_t id, float value, float scale);
+    bool transmitInt32(uint32_t id, int32_t value);
+    bool transmitDoubleSplit(uint32_t idUpper, uint32_t idLower, double value);
+    
+    // Legacy mapping helpers / Commands
     bool transmitVoiceCmd(uint8_t alertCode);
     bool transmitCalibZero();
     bool transmitOtaStart();

@@ -118,7 +118,8 @@ void taskSensorAcquisition(void* pvParameters) {
             }
         }
 
-        canBus.transmitAltitude(rangeLiDAR, rangeUltrasonic, true);
+        canBus.transmitScaled(CAN_ID_ALT_US, rangeUltrasonic, CAN_Scale::DISTANCE);
+        canBus.transmitScaled(CAN_ID_ALT_LIDAR, rangeLiDAR, CAN_Scale::DISTANCE);
     }
 }
 

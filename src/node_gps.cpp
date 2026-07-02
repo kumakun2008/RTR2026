@@ -91,7 +91,17 @@ void taskSensorAcquisition(void* pvParameters) {
         vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(100)); // 10Hz
         GPSPayload gpsData;
         if (gpsSync.getGPSData(gpsData)) {
-            canBus.transmitGPSPos(gpsData.latitude, gpsData.longitude);
+            // Split double Lat/Lon and transmit
+            canBus.transmitDoubleSplit(CAN_ID_GPS_LAT_UPPER, CAN_ID_GPS_LAT_LOWER, gpsData.latitude);
+            canBus.transmitDoubleSplit(CAN_ID_GPS_LON_UPPER, CAN_ID_GPS_LON_LOWER, gpsData.longitude);
+            
+            // Transmit scaled floats
+            canBus.transmitScaled(CAN_ID_GPS_ALT, gpsData.altitude, CAN_Scale::GPS_ALT);
+            canBus.transmitScaled(CAN_ID_GPS_SPEED, gpsData.speed, CAN_Scale::GPS_SPEED);
+            canBus.transmitScaled(CAN_ID_GPS_AZIMUTH, (float)gpsData.heading, CAN_Scale::GPS_AZIMUTH);
+            
+            // UTC time as int32
+            canBus.transmitInt32(CAN_ID_GPS_UTC, (int32_t)gpsData.utc);
         }
     }
 }

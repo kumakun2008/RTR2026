@@ -109,6 +109,7 @@ public:
         payload.sat_count = 12;
         payload.fix_status = 4;
         payload.heading = 0;
+        payload.utc = 123456.0f;
         return true;
     }
     bool isSynced() const { return false; }

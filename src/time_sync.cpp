@@ -16,7 +16,7 @@ volatile uint64_t TimeSync::_utcOffsetUs = 0;
 volatile bool TimeSync::_ppsTriggered = false;
 SemaphoreHandle_t TimeSync::_timeMutex = NULL;
 
-GPSPayload TimeSync::_latestGPSData = { 0.0, 0.0, 0.0f, 0.0f, 0, 0, 0 };
+GPSPayload TimeSync::_latestGPSData = { 0.0, 0.0, 0.0f, 0.0f, 0, 0, 0, 0.0f };
 volatile bool TimeSync::_hasFreshGPS = false;
 
 TimeSync::TimeSync()
@@ -164,6 +164,7 @@ void TimeSync::parseNMEA(const char* sentence) {
             _latestGPSData.longitude = lonVal;
             _latestGPSData.speed = speedMs;
             _latestGPSData.heading = (uint16_t)(headingDeg * 100.0f);
+            _latestGPSData.utc = atof(timeStr);
             _hasFreshGPS = true;
             xSemaphoreGive(_timeMutex);
         }
