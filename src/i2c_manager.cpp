@@ -167,6 +167,45 @@ bool I2CManager::readAfterCommand16(uint8_t devAddr, uint16_t command, uint8_t* 
     return true;
 }
 
+bool I2CManager::readAfterCommand8(uint8_t devAddr, uint8_t command, uint8_t* data, size_t size, uint32_t delayMs) {
+    if (!lock()) return false;
+    
+    _wire.beginTransmission(devAddr);
+    _wire.write(command);
+    uint8_t error = _wire.endTransmission();
+    
+    if (error != 0) {
+        unlock();
+        return false;
+    }
+    
+    if (delayMs > 0) {
+#ifdef ESP32
+        vTaskDelay(pdMS_TO_TICKS(delayMs));
+#else
+        delay(delayMs);
+#endif
+    }
+    
+    size_t requested = _wire.requestFrom(devAddr, (uint8_t)size);
+    if (requested != size) {
+        unlock();
+        return false;
+    }
+    
+    for (size_t i = 0; i < size; i++) {
+        if (_wire.available()) {
+            data[i] = _wire.read();
+        } else {
+            unlock();
+            return false;
+        }
+    }
+    
+    unlock();
+    return true;
+}
+
 void I2CManager::recoverBus() {
     bool locked = lock(10);
     

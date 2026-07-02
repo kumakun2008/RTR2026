@@ -237,11 +237,20 @@ BNO055Sensor::BNO055Sensor(I2CManager& i2c, uint8_t address)
 
 bool BNO055Sensor::begin() {
     uint8_t whoAmI = 0;
-    // BNO055 CHIP_ID register (0x00) should be 0xA0
-    if (!_i2c.readRegister(_address, 0x00, &whoAmI, 1)) {
-        return false;
+    bool deviceFound = false;
+    
+    // Retry WHO_AM_I check up to 10 times with 100ms delay to wait for BNO055 power-up
+    for (int retry = 0; retry < 10; retry++) {
+        delay(100);
+        if (_i2c.readRegister(_address, 0x00, &whoAmI, 1)) {
+            if (whoAmI == 0xA0) {
+                deviceFound = true;
+                break;
+            }
+        }
     }
-    if (whoAmI != 0xA0) {
+    
+    if (!deviceFound) {
         return false;
     }
     
@@ -303,7 +312,7 @@ bool SHT41Sensor::read(float& temp, float& humidity) {
     
     uint8_t rawData[6];
     // Command 0xFD: High precision read command. Wait 10ms for measurement.
-    if (!_i2c.readAfterCommand16(_address, 0xFD00, rawData, 6, 10)) { // Note command formatting
+    if (!_i2c.readAfterCommand8(_address, 0xFD, rawData, 6, 10)) {
         return false;
     }
     

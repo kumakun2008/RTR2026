@@ -97,6 +97,17 @@ public:
     bool readAfterCommand16(uint8_t devAddr, uint16_t command, uint8_t* data, size_t size, uint32_t delayMs = 0);
 
     /**
+     * @brief Transmit an 8-bit command and then read responses after an optional delay.
+     * @param devAddr Device address.
+     * @param command 8-bit command.
+     * @param data Buffer to store read bytes.
+     * @param size Number of bytes to read.
+     * @param delayMs Optional delay in milliseconds before reading.
+     * @return true if successful, false otherwise.
+     */
+    bool readAfterCommand8(uint8_t devAddr, uint8_t command, uint8_t* data, size_t size, uint32_t delayMs = 0);
+
+    /**
      * @brief Execute the hardware bus recovery routine.
      * Toggles SCL pin as a GPIO to release a locked SDA line (e.g., slave holding SDA low).
      */
