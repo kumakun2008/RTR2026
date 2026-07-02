@@ -140,13 +140,19 @@ void taskSensorAcquisition(void* pvParameters) {
         }
 
         float airspeed = 0.0f;
-        if (ok32 && ok31_1 && ok31_2) {
+        if (ok32 || ok31_1 || ok31_2) {
             PitotPayload pitotData = { press32, press31_1, press31_2, temp32 };
             sdLogger.logPacket(LOG_ID_PITOT_DATA, &pitotData, sizeof(pitotData), timestamp);
-            
+        }
+
+        if (ok32) {
             airspeed = (press32 > 0.0f) ? sqrt(2.0f * press32 / 1.225f) : 0.0f;
             canBus.transmitScaled(CAN_ID_PITOT_AIRSPEED, airspeed, CAN_Scale::GPS_SPEED);
+        }
+        if (ok31_1) {
             canBus.transmitScaled(CAN_ID_PITOT_AOA, press31_1, CAN_Scale::PRESSURE);
+        }
+        if (ok31_2) {
             canBus.transmitScaled(CAN_ID_PITOT_AOS, press31_2, CAN_Scale::PRESSURE);
         }
 
@@ -156,9 +162,12 @@ void taskSensorAcquisition(void* pvParameters) {
             canBus.transmitScaled(CAN_ID_PITOT_YAW, yaw, CAN_Scale::ANGLE);
         }
 
-        if (pitotSHT.read(tempSHT, hum)) {
-            canBus.transmitScaled(CAN_ID_PITOT_TEMP, tempSHT, CAN_Scale::TEMP);
-            canBus.transmitScaled(CAN_ID_PITOT_HUMID, hum, CAN_Scale::HUMIDITY);
+        // Poll slow SHT41 temperature and humidity sensor at 1Hz (every 100 loops)
+        if (loopCounter % 100 == 0) {
+            if (pitotSHT.read(tempSHT, hum)) {
+                canBus.transmitScaled(CAN_ID_PITOT_TEMP, tempSHT, CAN_Scale::TEMP);
+                canBus.transmitScaled(CAN_ID_PITOT_HUMID, hum, CAN_Scale::HUMIDITY);
+            }
         }
 
         // Teleplot Output (10Hz)
