@@ -238,21 +238,32 @@ BNO055Sensor::BNO055Sensor(I2CManager& i2c, uint8_t address)
 bool BNO055Sensor::begin() {
     uint8_t whoAmI = 0;
     bool deviceFound = false;
+    uint8_t detectedAddr = _address;
+    
+    uint8_t addrCandidates[2] = { _address, (uint8_t)(_address == 0x28 ? 0x29 : 0x28) };
     
     // Retry WHO_AM_I check up to 10 times with 100ms delay to wait for BNO055 power-up
     for (int retry = 0; retry < 10; retry++) {
         delay(100);
-        if (_i2c.readRegister(_address, 0x00, &whoAmI, 1)) {
-            if (whoAmI == 0xA0) {
-                deviceFound = true;
-                break;
+        for (int i = 0; i < 2; i++) {
+            uint8_t addr = addrCandidates[i];
+            if (_i2c.readRegister(addr, 0x00, &whoAmI, 1)) {
+                if (whoAmI == 0xA0) {
+                    detectedAddr = addr;
+                    deviceFound = true;
+                    _address = addr; // Auto-assign detected address
+                    break;
+                }
             }
         }
+        if (deviceFound) break;
     }
     
     if (!deviceFound) {
+        Serial.printf("[BNO055 ERR] Sensor not responding at 0x28 or 0x29 (Read chip ID: 0x%02X)\n", whoAmI);
         return false;
     }
+    Serial.printf("[BNO055 OK] Initialized at I2C address 0x%02X\n", _address);
     
     // Set to Config Mode: OPR_MODE (0x3D) = 0x00
     if (!_i2c.writeRegister(_address, 0x3D, 0x00)) return false;
