@@ -46,8 +46,8 @@ constexpr uint32_t CAN_ID_MAIN_PRESS    = 0x040;
 constexpr uint32_t CAN_ID_MAIN_TEMP     = 0x041;
 
 // [Node 5] Altimeter Board
-constexpr uint32_t CAN_ID_ALT_US        = 0x042;
-constexpr uint32_t CAN_ID_ALT_LIDAR     = 0x043;
+constexpr uint32_t CAN_ID_ALT_LIDAR     = 0x100;
+constexpr uint32_t CAN_ID_ALT_US        = 0x101;
 
 // [Node 4] GPS Board
 constexpr uint32_t CAN_ID_GPS_LAT_UPPER = 0x050;

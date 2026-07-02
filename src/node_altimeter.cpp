@@ -1,153 +1,167 @@
 #include <Arduino.h>
-#include <esp_task_wdt.h>
-#include "common_types.hpp"
-#include "i2c_manager.hpp"
-#include "can_manager.hpp"
-#include <WiFi.h>
-#include <ArduinoOTA.h>
+#include <Wire.h>
+#include "driver/twai.h"
 
-#define I2C_SDA_PIN 21
-#define I2C_SCL_PIN 22
-#define CAN_TX_PIN   32
-#define CAN_RX_PIN   33 
+// TSD20 Lidar
+#define TSD_RX 6  // 基板上のD4 (GPIO6)
+#define TSD_TX 7  // 基板上のD5 (GPIO7)
+#define OFFSET_CORRECTION 0  // 補正値
 
-#define ULTRASONIC_TRIG_PIN 26
-#define ULTRASONIC_ECHO_PIN 27
+// URM37v5.0 Ultrasonic Sensor
+#define URM_ECHO_PIN 2  // 基板上のD0 (GPIO2)
+#define URM_TRIG_PIN 3  // 基板上のD1 (GPIO3)
 
-I2CManager i2cBus(Wire, I2C_SDA_PIN, I2C_SCL_PIN, 400000);
-CANManager canBus;
+// CAN GPIO Pins
+#define CAN_TX_PIN GPIO_NUM_20
+#define CAN_RX_PIN GPIO_NUM_21
 
-float rangeLiDAR = 0.0f;
-float rangeUltrasonic = 0.0f;
+// CAN IDs (11-bit standard)
+#define LIDAR_CAN_ID      0x100
+#define ULTRASONIC_CAN_ID 0x101
 
-volatile bool isOtaMode = false;
-uint32_t otaTimeoutStart = 0;
+// I2C Slave Address and Pins (ESP32-C3)
+#define I2C_SLAVE_ADDR 0x30
+#define I2C_SDA_PIN 8
+#define I2C_SCL_PIN 9
 
-void taskSensorAcquisition(void* pvParameters);
-void taskCANReceive(void* pvParameters);
-void enterOTAMode();
+// Shared data variables
+volatile uint16_t lidarDistance_mm = 0;
+volatile uint8_t ultrasoundDistance_cm = 0;
+volatile uint8_t i2cRegAddr = 0x00;
 
-void enterOTAMode() {
-    isOtaMode = true;
-    esp_task_wdt_delete(NULL);
-    Serial.println("Entering multi-node OTA Update Mode...");
-    WiFi.mode(WIFI_STA);
-    WiFi.begin("RTR_Glider_OTA_AP", "rtr2026glider");
-    
-    Serial.print("Connecting to Glider OTA Network");
-    int retries = 0;
-    while (WiFi.status() != WL_CONNECTED && retries < 30) {
-        delay(500);
-        Serial.print(".");
-        retries++;
+// I2C Slave Callbacks
+void onI2CReceive(int numBytes) {
+    if (numBytes > 0) {
+        i2cRegAddr = Wire.read(); // Capture starting register address
     }
+    // Discard any excess bytes
+    while (Wire.available()) {
+        Wire.read();
+    }
+}
+
+void onI2CRequest() {
+    uint8_t buffer[4];
+    buffer[0] = (uint8_t)((lidarDistance_mm >> 8) & 0xFF); // LiDAR dist High byte
+    buffer[1] = (uint8_t)(lidarDistance_mm & 0xFF);        // LiDAR dist Low byte
+    buffer[2] = ultrasoundDistance_cm;                     // Ultrasonic dist (cm)
+    buffer[3] = 0xAA;                                      // Status (OK: 0xAA)
     
-    if (WiFi.status() == WL_CONNECTED) {
-        Serial.println("\n[OK] Connected to OTA AP");
-        Serial.print("IP Address: ");
-        Serial.println(WiFi.localIP());
+    if (i2cRegAddr <= 3) {
+        int count = 4 - i2cRegAddr;
+        Wire.write(&buffer[i2cRegAddr], count);
     } else {
-        Serial.println("\n[ERR] Connection timed out. Rebooting...");
-        delay(1000);
-        ESP.restart();
+        Wire.write(0xFF);
+    }
+}
+
+void initCAN() {
+    twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(CAN_TX_PIN, CAN_RX_PIN, TWAI_MODE_NORMAL);
+    
+    // Set timing to 500kbps (per communication specification sheet)
+    twai_timing_config_t t_config = TWAI_TIMING_CONFIG_500KBITS();
+    twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
+
+    if (twai_driver_install(&g_config, &t_config, &f_config) == ESP_OK) {
+        Serial.println("[OK] TWAI (CAN) Driver Installed");
+    } else {
+        Serial.println("[ERR] Failed to install TWAI Driver");
+        return;
     }
 
-    ArduinoOTA.setHostname("RTR_Altimeter_Board");
-    ArduinoOTA.onStart([]() { Serial.println("[OTA] Download starting..."); });
-    ArduinoOTA.onEnd([]() { Serial.println("[OTA] Completed. Restarting node..."); ESP.restart(); });
-    ArduinoOTA.onError([](ota_error_t error) { Serial.printf("[OTA] Error[%u]. Rebooting...\n", error); ESP.restart(); });
-    ArduinoOTA.begin();
+    if (twai_start() == ESP_OK) {
+        Serial.println("[OK] TWAI (CAN) Driver Started");
+    } else {
+        Serial.println("[ERR] Failed to start TWAI Driver");
+    }
+}
+
+void sendSensorData(uint32_t id, const uint8_t* data, uint8_t dlc) {
+    twai_message_t message;
+    message.identifier = id;
+    message.extd = 0;
+    message.rtr = 0;
+    message.data_length_code = dlc;
     
-    otaTimeoutStart = millis();
+    for (int i = 0; i < dlc; i++) {
+        message.data[i] = data[i];
+    }
+
+    esp_err_t res = twai_transmit(&message, pdMS_TO_TICKS(0));
+    if (res == ESP_OK) {
+        Serial.printf("[TX] Sent to ID 0x%03X, DLC: %d\n", id, dlc);
+    } else {
+        Serial.printf("[TX ERR] Failed to send to ID 0x%03X (Error: %d)\n", id, res);
+    }
 }
 
 void setup() {
     Serial.begin(115200);
-    delay(1000);
-    Serial.println("--- RTR2026 Avionics Initialization ---");
-    Serial.println("Running: RTR_Altimeter_Board Configuration (ESP32-C3)");
+    delay(2000);
+    Serial.println("--- Altimeter Node (ESP32-C3) Init ---");
 
-    if (i2cBus.begin()) {
-        Serial.println("[OK] I2C Manager Active");
-    }
+    // Initialize TSD20 Lidar Serial at 460800 bps
+    Serial1.begin(460800, SERIAL_8N1, TSD_RX, TSD_TX);
 
-    if (canBus.begin(CAN_TX_PIN, CAN_RX_PIN)) {
-        Serial.println("[OK] CAN Bus Driver Active");
-    }
+    // Initialize URM37v5.0 Pins
+    pinMode(URM_TRIG_PIN, OUTPUT);
+    pinMode(URM_ECHO_PIN, INPUT);
+    digitalWrite(URM_TRIG_PIN, LOW);
 
-    pinMode(ULTRASONIC_TRIG_PIN, OUTPUT);
-    pinMode(ULTRASONIC_ECHO_PIN, INPUT);
-    
-    xTaskCreate(taskSensorAcquisition, "AltimeterTask", 3072, NULL, 5, NULL);
-    xTaskCreate(taskCANReceive, "CANRxTask", 3072, NULL, 3, NULL);
+    // Initialize I2C Slave Interface
+    Wire.begin(I2C_SLAVE_ADDR, I2C_SDA_PIN, I2C_SCL_PIN, 400000);
+    Wire.onReceive(onI2CReceive);
+    Wire.onRequest(onI2CRequest);
+    Serial.println("[OK] I2C Slave Initialized at Address 0x30");
 
-    Serial.println("--- Initialization Complete ---");
+    // Initialize CAN (500kbps)
+    initCAN();
 }
 
 void loop() {
-    vTaskDelay(portMAX_DELAY);
-}
+    // 1. Read and parse Serial stream from TSD20 Lidar
+    while (Serial1.available() >= 4) {
+        if (Serial1.read() == 0x5C) {
+            uint8_t dL = Serial1.read();
+            uint8_t dH = Serial1.read();
+            uint8_t chk = Serial1.read(); // checksum (ignored)
 
-void taskSensorAcquisition(void* pvParameters) {
-    TickType_t xLastWakeTime = xTaskGetTickCount();
-    while (true) {
-        vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(20)); // 50Hz
-        
-        digitalWrite(ULTRASONIC_TRIG_PIN, LOW);
-        delayMicroseconds(2);
-        digitalWrite(ULTRASONIC_TRIG_PIN, HIGH);
-        delayMicroseconds(10);
-        digitalWrite(ULTRASONIC_TRIG_PIN, LOW);
-        
-        long duration = pulseIn(ULTRASONIC_ECHO_PIN, HIGH, 15000); 
-        if (duration > 0) {
-            rangeUltrasonic = (float)duration * 0.0001715f; 
-        } else {
-            rangeUltrasonic = 0.0f;
-        }
-        
-        uint8_t cmd[5] = {0x5A, 0x05, 0x07, 0x01, 0x67};
-        if (i2cBus.writeRaw(0x10, cmd, 5)) {
-            delayMicroseconds(200);
-            uint8_t rawLiDARBytes[9];
-            if (i2cBus.readRaw(0x10, rawLiDARBytes, 9)) {
-                if (rawLiDARBytes[0] == 0x59 && rawLiDARBytes[1] == 0x59) {
-                    uint16_t distCm = (uint16_t)(rawLiDARBytes[2] | (rawLiDARBytes[3] << 8));
-                    rangeLiDAR = (float)distCm / 100.0f;
-                }
+            uint16_t rawDistance = (uint16_t)((dH << 8) | dL);
+            if (rawDistance != 50000) { // filter out-of-bounds readings
+                int corrected = (int)rawDistance + OFFSET_CORRECTION;
+                lidarDistance_mm = (corrected < 0) ? 0 : (uint16_t)corrected;
             }
         }
-
-        canBus.transmitScaled(CAN_ID_ALT_US, rangeUltrasonic, CAN_Scale::DISTANCE);
-        canBus.transmitScaled(CAN_ID_ALT_LIDAR, rangeLiDAR, CAN_Scale::DISTANCE);
     }
-}
 
-void taskCANReceive(void* pvParameters) {
-    uint32_t rxId = 0;
-    uint8_t rxData[8];
-    uint8_t rxDlc = 0;
+    // 2. Measure Ultrasonic distance and broadcast both metrics (500ms cycle)
+    static uint32_t lastMeasurement = 0;
+    if (millis() - lastMeasurement >= 500) {
+        lastMeasurement = millis();
 
-    while (true) {
-        if (isOtaMode) {
-            enterOTAMode();
-            while (true) {
-                ArduinoOTA.handle();
-                if (millis() - otaTimeoutStart > 300000) {
-                    Serial.println("[OTA] Timeout. Rebooting...");
-                    delay(1000);
-                    ESP.restart();
-                }
-                vTaskDelay(pdMS_TO_TICKS(10));
-            }
+        // URM37v5.0 trigger pulse
+        digitalWrite(URM_TRIG_PIN, HIGH);
+        delayMicroseconds(10);
+        digitalWrite(URM_TRIG_PIN, LOW);
+
+        long duration = pulseIn(URM_ECHO_PIN, HIGH, 30000); // 30ms timeout (approx 5m range)
+        if (duration > 0) {
+            float urm_mm = duration * 0.17f;
+            ultrasoundDistance_cm = (uint8_t)(urm_mm / 10.0f); // Convert mm to cm
+        } else {
+            ultrasoundDistance_cm = 0; // out of range
         }
 
-        if (canBus.receiveRaw(rxId, rxData, rxDlc, 20)) {
-            if (rxId == CAN_ID_OTA_START) {
-                isOtaMode = true;
-                continue;
-            }
-        }
-        vTaskDelay(pdMS_TO_TICKS(1));
+        // Broadcast Lidar range via CAN ID 0x100
+        uint8_t lidarData[2];
+        lidarData[0] = (lidarDistance_mm >> 8) & 0xFF;
+        lidarData[1] = lidarDistance_mm & 0xFF;
+        sendSensorData(LIDAR_CAN_ID, lidarData, 2);
+
+        // Broadcast Ultrasonic range via CAN ID 0x101
+        uint8_t ultraData[2];
+        ultraData[0] = ultrasoundDistance_cm;
+        ultraData[1] = 0xAA;
+        sendSensorData(ULTRASONIC_CAN_ID, ultraData, 2);
     }
 }

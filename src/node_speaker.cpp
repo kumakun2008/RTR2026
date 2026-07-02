@@ -122,8 +122,9 @@ void taskCANReceive(void* pvParameters) {
                     alertLowAltitude = true;
                 }
             }
-            else if (rxId == CAN_ID_ALT_LIDAR && rxDlc >= 4) {
-                float currentAlt = getFloat(rxData, CAN_Scale::DISTANCE);
+            else if (rxId == CAN_ID_ALT_LIDAR && rxDlc >= 2) {
+                uint16_t rawLidar = (uint16_t)((rxData[0] << 8) | rxData[1]);
+                float currentAlt = (float)rawLidar / 1000.0f;
                 if (currentAlt > 0.1f && currentAlt < 5.0f) {
                     alertLowAltitude = true;
                 }

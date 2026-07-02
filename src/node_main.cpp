@@ -56,6 +56,10 @@ struct DisplayTelemetry {
     float altLidar = 0.0f;
     float altUS = 0.0f;
     float rudderAngle = 0.0f;
+    
+    // Status flags
+    bool has_altLidar = false;
+    bool has_altUS = false;
 } flightData;
 
 volatile bool isOtaMode = false;
@@ -215,11 +219,15 @@ void taskCANReceive(void* pvParameters) {
             else if (rxId == CAN_ID_RUDDER_ANGLE) {
                 flightData.rudderAngle = getFloat(rxData, CAN_Scale::ANGLE);
             }
-            else if (rxId == CAN_ID_ALT_US) {
-                flightData.altUS = getFloat(rxData, CAN_Scale::DISTANCE);
-            }
             else if (rxId == CAN_ID_ALT_LIDAR) {
-                flightData.altLidar = getFloat(rxData, CAN_Scale::DISTANCE);
+                uint16_t rawLidar = (uint16_t)((rxData[0] << 8) | rxData[1]);
+                flightData.altLidar = (float)rawLidar / 1000.0f;
+                flightData.has_altLidar = true;
+            }
+            else if (rxId == CAN_ID_ALT_US) {
+                uint8_t rawUS = rxData[0];
+                flightData.altUS = (float)rawUS / 100.0f;
+                flightData.has_altUS = true;
             }
             else if (rxId == CAN_ID_GPS_LAT_UPPER) {
                 uint32_t upper;
