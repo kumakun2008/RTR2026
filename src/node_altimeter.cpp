@@ -163,5 +163,9 @@ void loop() {
         ultraData[0] = ultrasoundDistance_cm;
         ultraData[1] = 0xAA;
         sendSensorData(ULTRASONIC_CAN_ID, ultraData, 2);
+
+        // Teleplot Output
+        Serial.printf(">alt_lidar:%d\n", lidarDistance_mm);
+        Serial.printf(">alt_ultrasonic:%d\n", ultrasoundDistance_cm);
     }
 }

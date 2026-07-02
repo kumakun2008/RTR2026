@@ -118,13 +118,15 @@ void taskSensorAcquisition(void* pvParameters) {
     TickType_t xLastWakeTime = xTaskGetTickCount();
     uint32_t loopCounter = 0;
 
+    float press32 = 0, temp32 = 0;
+    float press31_1 = 0, temp31_1 = 0;
+    float press31_2 = 0, temp31_2 = 0;
+    float roll = 0, pitch = 0, yaw = 0;
+    float hum = 0, tempSHT = 0;
+
     while (true) {
         vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(10));
         uint64_t timestamp = esp_timer_get_time();
-
-        float press32 = 0, temp32 = 0;
-        float press31_1 = 0, temp31_1 = 0;
-        float press31_2 = 0, temp31_2 = 0;
         
         bool ok32 = pitotSDP32.read(press32, temp32);
         bool ok31_1 = pitotSDP31_1.read(press31_1, temp31_1);
@@ -137,28 +139,40 @@ void taskSensorAcquisition(void* pvParameters) {
             calibSampleCount++;
         }
 
+        float airspeed = 0.0f;
         if (ok32 && ok31_1 && ok31_2) {
             PitotPayload pitotData = { press32, press31_1, press31_2, temp32 };
             sdLogger.logPacket(LOG_ID_PITOT_DATA, &pitotData, sizeof(pitotData), timestamp);
             
-            // Broadcastdynamic pressure and calculated airspeed on CAN
-            float airspeed = (press32 > 0.0f) ? sqrt(2.0f * press32 / 1.225f) : 0.0f;
+            airspeed = (press32 > 0.0f) ? sqrt(2.0f * press32 / 1.225f) : 0.0f;
             canBus.transmitScaled(CAN_ID_PITOT_AIRSPEED, airspeed, CAN_Scale::GPS_SPEED);
             canBus.transmitScaled(CAN_ID_PITOT_AOA, press31_1, CAN_Scale::PRESSURE);
             canBus.transmitScaled(CAN_ID_PITOT_AOS, press31_2, CAN_Scale::PRESSURE);
         }
 
-        float roll = 0, pitch = 0, yaw = 0;
         if (pitotIMU.read(roll, pitch, yaw)) {
             canBus.transmitScaled(CAN_ID_PITOT_PITCH, pitch, CAN_Scale::ANGLE);
             canBus.transmitScaled(CAN_ID_PITOT_ROLL, roll, CAN_Scale::ANGLE);
             canBus.transmitScaled(CAN_ID_PITOT_YAW, yaw, CAN_Scale::ANGLE);
         }
 
-        float hum = 0, tempSHT = 0;
         if (pitotSHT.read(tempSHT, hum)) {
             canBus.transmitScaled(CAN_ID_PITOT_TEMP, tempSHT, CAN_Scale::TEMP);
             canBus.transmitScaled(CAN_ID_PITOT_HUMID, hum, CAN_Scale::HUMIDITY);
+        }
+
+        // Teleplot Output (10Hz)
+        static uint32_t lastPlot = 0;
+        if (millis() - lastPlot >= 100) {
+            lastPlot = millis();
+            Serial.printf(">pitot_airspeed:%.2f\n", airspeed);
+            Serial.printf(">pitot_aoa:%.2f\n", press31_1);
+            Serial.printf(">pitot_aos:%.2f\n", press31_2);
+            Serial.printf(">pitot_pitch:%.2f\n", pitch);
+            Serial.printf(">pitot_roll:%.2f\n", roll);
+            Serial.printf(">pitot_yaw:%.2f\n", yaw);
+            Serial.printf(">pitot_temp:%.2f\n", tempSHT);
+            Serial.printf(">pitot_humid:%.2f\n", hum);
         }
 
         loopCounter++;

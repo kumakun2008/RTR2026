@@ -324,5 +324,21 @@ void taskUIDraw(void* pvParameters) {
         } else {
             tft.println("GPS Alt : No Data    ");
         }
+
+        // Teleplot Output
+        if (flightData.has_batteryVolt) Serial.printf(">disp_bat:%.2f\n", flightData.batteryVolt);
+        if (flightData.has_pitotPress32) Serial.printf(">disp_airspeed:%.2f\n", flightData.pitotPress32);
+        if (flightData.has_altLidar) Serial.printf(">disp_alt_lidar:%.2f\n", flightData.altLidar);
+        if (flightData.has_altUS) Serial.printf(">disp_alt_us:%.2f\n", flightData.altUS);
+        if (flightData.has_gyro) {
+            Serial.printf(">disp_pitch:%.2f\n", flightData.gyro[0]);
+            Serial.printf(">disp_roll:%.2f\n", flightData.gyro[1]);
+        }
+        if (flightData.has_rudderAngle) Serial.printf(">disp_rudder:%.2f\n", flightData.rudderAngle);
+        if (flightData.has_gpsPos) {
+            Serial.printf(">disp_gps_lat:%.6f\n", flightData.gpsLat);
+            Serial.printf(">disp_gps_lon:%.6f\n", flightData.gpsLon);
+        }
+        if (flightData.has_gpsAlt) Serial.printf(">disp_gps_alt:%.2f\n", flightData.gpsAlt);
     }
 }

@@ -65,21 +65,21 @@ void loop() {
         digitalWrite(LED_PIN, ledState ? HIGH : LOW);
     }
 
+    static IMUPayload imuData = {0};
+
     if (millis() - lastRead >= 10) { // 100Hz Rate
         lastRead = millis();
         
-        IMUPayload imuData;
-        if (rudderIMU.read(imuData)) {
-            // Acc X, Y, Z
-            canBus.transmitScaled(CAN_ID_RUDDER_ACC_X, imuData.accel_x, CAN_Scale::ACCEL);
-            canBus.transmitScaled(CAN_ID_RUDDER_ACC_Y, imuData.accel_y, CAN_Scale::ACCEL);
-            canBus.transmitScaled(CAN_ID_RUDDER_ACC_Z, imuData.accel_z, CAN_Scale::ACCEL);
-            
-            // Gyro X, Y, Z
-            canBus.transmitScaled(CAN_ID_RUDDER_GYRO_X, imuData.gyro_x, CAN_Scale::GYRO);
-            canBus.transmitScaled(CAN_ID_RUDDER_GYRO_Y, imuData.gyro_y, CAN_Scale::GYRO);
-            canBus.transmitScaled(CAN_ID_RUDDER_GYRO_Z, imuData.gyro_z, CAN_Scale::GYRO);
-        }
+        rudderIMU.read(imuData);
+        // Acc X, Y, Z
+        canBus.transmitScaled(CAN_ID_RUDDER_ACC_X, imuData.accel_x, CAN_Scale::ACCEL);
+        canBus.transmitScaled(CAN_ID_RUDDER_ACC_Y, imuData.accel_y, CAN_Scale::ACCEL);
+        canBus.transmitScaled(CAN_ID_RUDDER_ACC_Z, imuData.accel_z, CAN_Scale::ACCEL);
+        
+        // Gyro X, Y, Z
+        canBus.transmitScaled(CAN_ID_RUDDER_GYRO_X, imuData.gyro_x, CAN_Scale::GYRO);
+        canBus.transmitScaled(CAN_ID_RUDDER_GYRO_Y, imuData.gyro_y, CAN_Scale::GYRO);
+        canBus.transmitScaled(CAN_ID_RUDDER_GYRO_Z, imuData.gyro_z, CAN_Scale::GYRO);
         
         uint8_t angleBytes[2];
         if (i2cBus.readRegister(0x36, 0x0E, angleBytes, 2)) {
@@ -88,5 +88,18 @@ void loop() {
         }
 
         canBus.transmitScaled(CAN_ID_RUDDER_ANGLE, rawRudderAngle, CAN_Scale::ANGLE);
+
+        // Teleplot Output (10Hz)
+        static uint32_t lastPlot = 0;
+        if (millis() - lastPlot >= 100) {
+            lastPlot = millis();
+            Serial.printf(">rudder_acc_x:%.3f\n", imuData.accel_x);
+            Serial.printf(">rudder_acc_y:%.3f\n", imuData.accel_y);
+            Serial.printf(">rudder_acc_z:%.3f\n", imuData.accel_z);
+            Serial.printf(">rudder_gyro_x:%.3f\n", imuData.gyro_x);
+            Serial.printf(">rudder_gyro_y:%.3f\n", imuData.gyro_y);
+            Serial.printf(">rudder_gyro_z:%.3f\n", imuData.gyro_z);
+            Serial.printf(">rudder_angle:%.2f\n", rawRudderAngle);
+        }
     }
 }

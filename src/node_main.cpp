@@ -133,36 +133,56 @@ void loop() {
 void taskSensorAcquisition(void* pvParameters) {
     TickType_t xLastWakeTime = xTaskGetTickCount();
     uint32_t loopCounter = 0;
+    
+    IMUPayload imuData = {0};
+    MagPayload magData = {0};
+    BaroPayload baroData = {0};
+
     while (true) {
         vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(10));
         uint64_t timestamp = timeSync.getAbsoluteTimeUs();
 
-        IMUPayload imuData;
-        if (mainIMU.read(imuData)) {
-            sdLogger.logPacket(LOG_ID_MAIN_IMU, &imuData, sizeof(imuData), timestamp);
-            canBus.transmitScaled(CAN_ID_MAIN_ACC_X, imuData.accel_x, CAN_Scale::ACCEL);
-            canBus.transmitScaled(CAN_ID_MAIN_ACC_Y, imuData.accel_y, CAN_Scale::ACCEL);
-            canBus.transmitScaled(CAN_ID_MAIN_ACC_Z, imuData.accel_z, CAN_Scale::ACCEL);
-            canBus.transmitScaled(CAN_ID_MAIN_GYRO_X, imuData.gyro_x, CAN_Scale::GYRO);
-            canBus.transmitScaled(CAN_ID_MAIN_GYRO_Y, imuData.gyro_y, CAN_Scale::GYRO);
-            canBus.transmitScaled(CAN_ID_MAIN_GYRO_Z, imuData.gyro_z, CAN_Scale::GYRO);
-        }
-        MagPayload magData;
-        if (mainMag.read(magData)) {
-            sdLogger.logPacket(LOG_ID_MAIN_MAG, &magData, sizeof(magData), timestamp);
-            canBus.transmitScaled(CAN_ID_MAIN_MAG_X, magData.mag_x, CAN_Scale::MAG);
-            canBus.transmitScaled(CAN_ID_MAIN_MAG_Y, magData.mag_y, CAN_Scale::MAG);
-            canBus.transmitScaled(CAN_ID_MAIN_MAG_Z, magData.mag_z, CAN_Scale::MAG);
-        }
+        mainIMU.read(imuData);
+        sdLogger.logPacket(LOG_ID_MAIN_IMU, &imuData, sizeof(imuData), timestamp);
+        canBus.transmitScaled(CAN_ID_MAIN_ACC_X, imuData.accel_x, CAN_Scale::ACCEL);
+        canBus.transmitScaled(CAN_ID_MAIN_ACC_Y, imuData.accel_y, CAN_Scale::ACCEL);
+        canBus.transmitScaled(CAN_ID_MAIN_ACC_Z, imuData.accel_z, CAN_Scale::ACCEL);
+        canBus.transmitScaled(CAN_ID_MAIN_GYRO_X, imuData.gyro_x, CAN_Scale::GYRO);
+        canBus.transmitScaled(CAN_ID_MAIN_GYRO_Y, imuData.gyro_y, CAN_Scale::GYRO);
+        canBus.transmitScaled(CAN_ID_MAIN_GYRO_Z, imuData.gyro_z, CAN_Scale::GYRO);
+
+        mainMag.read(magData);
+        sdLogger.logPacket(LOG_ID_MAIN_MAG, &magData, sizeof(magData), timestamp);
+        canBus.transmitScaled(CAN_ID_MAIN_MAG_X, magData.mag_x, CAN_Scale::MAG);
+        canBus.transmitScaled(CAN_ID_MAIN_MAG_Y, magData.mag_y, CAN_Scale::MAG);
+        canBus.transmitScaled(CAN_ID_MAIN_MAG_Z, magData.mag_z, CAN_Scale::MAG);
+
         if (loopCounter % 4 != 0) {
-            BaroPayload baroData;
             if (mainBaro.read(baroData)) {
                 sdLogger.logPacket(LOG_ID_MAIN_BARO, &baroData, sizeof(baroData), timestamp);
-                // Pa に変換して送信
                 canBus.transmitScaled(CAN_ID_MAIN_PRESS, baroData.pressure * 100.0f, CAN_Scale::PRESSURE);
                 canBus.transmitScaled(CAN_ID_MAIN_TEMP, baroData.temperature, CAN_Scale::TEMP);
             }
         }
+
+        // Teleplot Output (10Hz)
+        static uint32_t lastPlot = 0;
+        if (millis() - lastPlot >= 100) {
+            lastPlot = millis();
+            Serial.printf(">main_acc_x:%.3f\n", imuData.accel_x);
+            Serial.printf(">main_acc_y:%.3f\n", imuData.accel_y);
+            Serial.printf(">main_acc_z:%.3f\n", imuData.accel_z);
+            Serial.printf(">main_gyro_x:%.3f\n", imuData.gyro_x);
+            Serial.printf(">main_gyro_y:%.3f\n", imuData.gyro_y);
+            Serial.printf(">main_gyro_z:%.3f\n", imuData.gyro_z);
+            Serial.printf(">main_mag_x:%.3f\n", magData.mag_x);
+            Serial.printf(">main_mag_y:%.3f\n", magData.mag_y);
+            Serial.printf(">main_mag_z:%.3f\n", magData.mag_z);
+            Serial.printf(">main_press:%.2f\n", baroData.pressure * 100.0f);
+            Serial.printf(">main_temp:%.2f\n", baroData.temperature);
+            Serial.printf(">main_bat:%.2f\n", battery.readVoltage());
+        }
+
         loopCounter++;
     }
 }

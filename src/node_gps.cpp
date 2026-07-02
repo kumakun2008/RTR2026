@@ -102,6 +102,15 @@ void taskSensorAcquisition(void* pvParameters) {
             
             // UTC time as int32
             canBus.transmitInt32(CAN_ID_GPS_UTC, (int32_t)gpsData.utc);
+
+            // Teleplot Output (10Hz)
+            Serial.printf(">gps_lat:%.6f\n", gpsData.latitude);
+            Serial.printf(">gps_lon:%.6f\n", gpsData.longitude);
+            Serial.printf(">gps_alt:%.2f\n", gpsData.altitude);
+            Serial.printf(">gps_speed:%.2f\n", gpsData.speed);
+            Serial.printf(">gps_heading:%.2f\n", (float)gpsData.heading / 100.0f);
+            Serial.printf(">gps_sats:%d\n", gpsData.sat_count);
+            Serial.printf(">gps_fix:%d\n", gpsData.fix_status);
         }
     }
 }
