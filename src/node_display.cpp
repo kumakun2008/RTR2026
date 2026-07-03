@@ -61,6 +61,82 @@ struct DisplayTelemetry {
     bool has_gpsAlt = false;
 } flightData;
 
+struct PrevDrawData {
+    float airspeed = -999.0f;
+    float pitch = -999.0f;
+    float roll = -999.0f;
+    float alt = -999.0f;
+    uint16_t heading = 999;
+    double gpsLat = 0.0;
+    double gpsLon = 0.0;
+    bool has_gpsPos = false;
+    bool useArakawaMap = false;
+} prevDraw;
+
+volatile bool useArakawaMap = false;
+
+// Global timestamps for tracking node communication status
+volatile uint32_t lastRxMain = 0;
+volatile uint32_t lastRxPitot = 0;
+volatile uint32_t lastRxRudder = 0;
+volatile uint32_t lastRxGPS = 0;
+volatile uint32_t lastRxAlt = 0;
+volatile uint32_t lastRxBridge = 0;
+
+void drawNodeStatus(int x, int y, const char* name, uint32_t lastRx) {
+    tft.setCursor(x, y);
+    tft.setTextSize(1);
+    tft.setTextColor(ILI9341_WHITE, ILI9341_BLACK);
+    tft.print(name);
+    tft.print(":");
+    if (millis() - lastRx < 2000) {
+        tft.setTextColor(ILI9341_GREEN, ILI9341_BLACK);
+        tft.print("OK  ");
+    } else {
+        tft.setTextColor(ILI9341_RED, ILI9341_BLACK);
+        tft.print("LOST");
+    }
+}
+
+void drawStaticLayout() {
+    tft.fillScreen(ILI9341_BLACK);
+    
+    // Draw Top Status Strip Line
+    tft.drawLine(0, 15, 320, 15, ILI9341_DARKGREY);
+    
+    // Draw ASI Gauge Outline & Title
+    tft.drawCircle(53, 65, 40, ILI9341_WHITE);
+    tft.setTextSize(1);
+    tft.setTextColor(ILI9341_WHITE);
+    tft.setCursor(45, 30);
+    tft.print("ASI");
+    
+    // Draw AI Gauge Outline
+    tft.drawCircle(160, 65, 40, ILI9341_WHITE);
+    tft.setCursor(152, 30);
+    tft.print("ATT");
+    
+    // Draw ALT Gauge Outline
+    tft.drawCircle(267, 65, 40, ILI9341_WHITE);
+    tft.setCursor(259, 30);
+    tft.print("ALT");
+    
+    // Draw HI Gauge Outline & Cardinal Points
+    tft.drawCircle(160, 180, 40, ILI9341_WHITE);
+    tft.setCursor(152, 145);
+    tft.print("HDG");
+    tft.setCursor(157, 153); tft.print("N");
+    tft.setCursor(157, 199); tft.print("S");
+    tft.setCursor(125, 177); tft.print("W");
+    tft.setCursor(189, 177); tft.print("E");
+    
+    // Draw Bottom-Left CAN Status Border
+    tft.drawRect(5, 125, 100, 95, ILI9341_WHITE);
+    
+    // Draw Bottom-Right Map Border
+    tft.drawRect(215, 125, 100, 95, ILI9341_WHITE);
+}
+
 void taskCANReceive(void* pvParameters);
 void taskUIDraw(void* pvParameters);
 void enterOTAMode();
@@ -116,7 +192,7 @@ void setup() {
     SPI.begin(SPI_SCK_PIN, SPI_MISO_PIN, SPI_MOSI_PIN);
     tft.begin();
     tft.setRotation(1);
-    tft.fillScreen(ILI9341_BLACK);
+    drawStaticLayout();
 
     xTaskCreatePinnedToCore(taskCANReceive, "CANRxTask", 4096, NULL, 3, NULL, 1);
     xTaskCreatePinnedToCore(taskUIDraw, "UIDrawTask", 8192, NULL, 1, NULL, 0);
@@ -158,6 +234,26 @@ void taskCANReceive(void* pvParameters) {
                 continue;
             }
             
+            // Update node communication status timestamps
+            if ((rxId >= 0x010 && rxId <= 0x018) || rxId == CAN_ID_BATTERY_VOLT || rxId == CAN_ID_MAIN_PRESS || rxId == CAN_ID_MAIN_TEMP) {
+                lastRxMain = millis();
+            }
+            else if (rxId >= 0x030 && rxId <= 0x037) {
+                lastRxPitot = millis();
+            }
+            else if (rxId >= 0x020 && rxId <= 0x026) {
+                lastRxRudder = millis();
+            }
+            else if (rxId >= 0x050 && rxId <= 0x057) {
+                lastRxGPS = millis();
+            }
+            else if (rxId == CAN_ID_ALT_LIDAR || rxId == CAN_ID_ALT_US) {
+                lastRxAlt = millis();
+            }
+            else if (rxId == 0x042 || rxId == CAN_ID_VOICE_CMD) {
+                lastRxBridge = millis();
+            }
+
             auto getFloat = [&](const uint8_t* d, float scale) {
                 int32_t raw;
                 memcpy(&raw, d, 4);
@@ -256,76 +352,245 @@ void taskCANReceive(void* pvParameters) {
 void taskUIDraw(void* pvParameters) {
     TickType_t xLastWakeTime = xTaskGetTickCount();
     while (true) {
-        vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(250)); // 4Hz (Prevents watchdogs and high bus overhead)
+        vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(200)); // 5Hz UI Update Rate
         
-        tft.setCursor(0, 0);
-        tft.setTextSize(2);
-        
-        tft.setTextColor(ILI9341_GREEN, ILI9341_BLACK);
-        tft.println("=== RTR FLIGHT DATA ===");
-        tft.println("");
-        
-        tft.setTextColor(ILI9341_WHITE, ILI9341_BLACK);
-        
-        // Battery
-        if (flightData.has_batteryVolt) {
-            tft.printf("Battery : %5.2f V    \n", flightData.batteryVolt);
-        } else {
-            tft.println("Battery : No Data    ");
-        }
-        
-        // Airspeed
-        if (flightData.has_pitotPress32) {
-            tft.printf("Airspeed: %5.2f m/s  \n", flightData.pitotPress32);
-        } else {
-            tft.println("Airspeed: No Data    ");
-        }
-        
-        // Altitude (LiDAR and Ultrasonic)
-        if (flightData.has_altLidar) {
-            tft.printf("LidarAlt: %5.2f m    \n", flightData.altLidar);
-        } else {
-            tft.println("LidarAlt: No Data    ");
-        }
-        
-        if (flightData.has_altUS) {
-            tft.printf("US Alt  : %5.2f m    \n", flightData.altUS);
-        } else {
-            tft.println("US Alt  : No Data    ");
-        }
-        
-        // Motion (Pitch/Roll)
-        if (flightData.has_gyro) {
-            tft.printf("Pitch   : %+5.1f deg  \n", flightData.gyro[0]);
-            tft.printf("Roll    : %+5.1f deg  \n", flightData.gyro[1]);
-        } else {
-            tft.println("Pitch   : No Data    ");
-            tft.println("Roll    : No Data    ");
-        }
-        
-        // Rudder Angle
-        if (flightData.has_rudderAngle) {
-            tft.printf("Rudder  : %+5.2f deg  \n", flightData.rudderAngle);
-        } else {
-            tft.println("Rudder  : No Data    ");
-        }
-        
-        // GPS Positions
-        if (flightData.has_gpsPos) {
-            tft.printf("Lat     : %10.6f   \n", flightData.gpsLat);
-            tft.printf("Lon     : %10.6f   \n", flightData.gpsLon);
-        } else {
-            tft.println("Lat     : No Data    ");
-            tft.println("Lon     : No Data    ");
-        }
-        
-        if (flightData.has_gpsAlt) {
-            tft.printf("GPS Alt : %5.2f m    \n", flightData.gpsAlt);
-        } else {
-            tft.println("GPS Alt : No Data    ");
+        // Process Serial Commands for Debug Map toggles
+        while (Serial.available() > 0) {
+            String cmd = Serial.readStringUntil('\n');
+            cmd.trim();
+            if (cmd.equalsIgnoreCase("MAP:SHIGA") || cmd.equalsIgnoreCase("MAP:SHI")) {
+                useArakawaMap = false;
+                Serial.println("[Display] Switched Map: Shiga Matsubara Beach");
+            } else if (cmd.equalsIgnoreCase("MAP:ARAKAWA") || cmd.equalsIgnoreCase("MAP:ARA")) {
+                useArakawaMap = true;
+                Serial.println("[Display] Switched Map: Arakawa Campus (TMCIT)");
+            }
         }
 
-        // Teleplot Output
+        // Determine current flight parameters
+        float current_speed = flightData.has_pitotPress32 ? flightData.pitotPress32 : 0.0f;
+        float current_pitch = flightData.has_gyro ? flightData.gyro[0] : 0.0f;
+        float current_roll = flightData.has_gyro ? flightData.gyro[1] : 0.0f;
+        float current_alt = flightData.has_altLidar ? flightData.altLidar : (flightData.has_altUS ? flightData.altUS : 0.0f);
+        uint16_t current_hdg = flightData.gpsHeading % 360;
+
+        // --- 0. Top Telemetry Status Strip ---
+        tft.setTextSize(1);
+        tft.setTextColor(ILI9341_WHITE, ILI9341_BLACK);
+        tft.setCursor(10, 3);
+        if (flightData.has_batteryVolt) {
+            tft.printf("BAT: %5.2f V", flightData.batteryVolt);
+        } else {
+            tft.print("BAT: No Data");
+        }
+        
+        tft.setCursor(120, 3);
+        if (flightData.has_rudderAngle) {
+            tft.printf("RUD: %+5.1f d", flightData.rudderAngle);
+        } else {
+            tft.print("RUD: No Data");
+        }
+
+        tft.setCursor(230, 3);
+        if (flightData.has_gpsAlt) {
+            tft.printf("GALT: %4.1f m", flightData.gpsAlt);
+        } else {
+            tft.print("GALT:No Data");
+        }
+
+        // --- 1. ASI Needle Draw/Erase ---
+        if (prevDraw.airspeed != -999.0f) {
+            float prev_a = (135.0f + (prevDraw.airspeed / 30.0f) * 270.0f) * DEG_TO_RAD;
+            int prev_nx = 53 + (int)(30.0f * cos(prev_a));
+            int prev_ny = 65 + (int)(30.0f * sin(prev_a));
+            tft.drawLine(53, 65, prev_nx, prev_ny, ILI9341_BLACK);
+        }
+        float speed_draw = constrain(current_speed, 0.0f, 30.0f);
+        float new_a = (135.0f + (speed_draw / 30.0f) * 270.0f) * DEG_TO_RAD;
+        int new_nx = 53 + (int)(30.0f * cos(new_a));
+        int new_ny = 65 + (int)(30.0f * sin(new_a));
+        tft.drawLine(53, 65, new_nx, new_ny, ILI9341_RED);
+
+        if (prevDraw.airspeed != current_speed) {
+            tft.fillRect(38, 77, 30, 8, ILI9341_BLACK);
+            tft.setTextSize(1);
+            tft.setTextColor(ILI9341_GREEN, ILI9341_BLACK);
+            tft.setCursor(38, 77);
+            tft.printf("%4.1f", current_speed);
+        }
+
+        // --- 2. AI (Attitude Indicator) Draw/Erase ---
+        if (prevDraw.pitch != -999.0f) {
+            float prev_pitch_rad = prevDraw.pitch * DEG_TO_RAD;
+            float prev_roll_rad = prevDraw.roll * DEG_TO_RAD;
+            float prev_dy = constrain(prevDraw.pitch, -25.0f, 25.0f);
+            float prev_cx = 160.0f - prev_dy * sin(prev_roll_rad);
+            float prev_cy = 65.0f + prev_dy * cos(prev_roll_rad);
+            float prev_dx = 28.0f * cos(prev_roll_rad);
+            float prev_dz = 28.0f * sin(prev_roll_rad);
+            tft.drawLine((int)(prev_cx - prev_dx), (int)(prev_cy - prev_dz), (int)(prev_cx + prev_dx), (int)(prev_cy + prev_dz), ILI9341_BLACK);
+        }
+        float new_pitch_rad = current_pitch * DEG_TO_RAD;
+        float new_roll_rad = current_roll * DEG_TO_RAD;
+        float new_dy = constrain(current_pitch, -25.0f, 25.0f);
+        float new_cx = 160.0f - new_dy * sin(new_roll_rad);
+        float new_cy = 65.0f + new_dy * cos(new_roll_rad);
+        float new_dx = 28.0f * cos(new_roll_rad);
+        float new_dz = 28.0f * sin(new_roll_rad);
+        tft.drawLine((int)(new_cx - new_dx), (int)(new_cy - new_dz), (int)(new_cx + new_dx), (int)(new_cy + new_dz), ILI9341_CYAN);
+
+        // Redraw Aircraft symbol (Yellow)
+        tft.drawLine(152, 65, 168, 65, ILI9341_YELLOW);
+        tft.fillCircle(160, 65, 2, ILI9341_YELLOW);
+
+        // --- 3. ALT Needle Draw/Erase ---
+        if (prevDraw.alt != -999.0f) {
+            float prev_a = (-90.0f + (prevDraw.alt / 20.0f) * 360.0f) * DEG_TO_RAD;
+            int prev_nx = 267 + (int)(30.0f * cos(prev_a));
+            int prev_ny = 65 + (int)(30.0f * sin(prev_a));
+            tft.drawLine(267, 65, prev_nx, prev_ny, ILI9341_BLACK);
+        }
+        float alt_draw = constrain(current_alt, 0.0f, 20.0f);
+        float alt_a = (-90.0f + (alt_draw / 20.0f) * 360.0f) * DEG_TO_RAD;
+        int alt_nx = 267 + (int)(30.0f * cos(alt_a));
+        int alt_ny = 65 + (int)(30.0f * sin(alt_a));
+        tft.drawLine(267, 65, alt_nx, alt_ny, ILI9341_RED);
+
+        if (prevDraw.alt != current_alt) {
+            tft.fillRect(252, 77, 30, 8, ILI9341_BLACK);
+            tft.setTextSize(1);
+            tft.setTextColor(ILI9341_GREEN, ILI9341_BLACK);
+            tft.setCursor(252, 77);
+            tft.printf("%4.1f", current_alt);
+        }
+
+        // --- 4. HI Needle Draw/Erase ---
+        if (prevDraw.heading != 999) {
+            float prev_a = (-90.0f + (float)prevDraw.heading) * DEG_TO_RAD;
+            int prev_nx = 160 + (int)(28.0f * cos(prev_a));
+            int prev_ny = 180 + (int)(28.0f * sin(prev_a));
+            tft.drawLine(160, 180, prev_nx, prev_ny, ILI9341_BLACK);
+        }
+        float hdg_a = (-90.0f + (float)current_hdg) * DEG_TO_RAD;
+        int hdg_nx = 160 + (int)(28.0f * cos(hdg_a));
+        int hdg_ny = 180 + (int)(28.0f * sin(hdg_a));
+        tft.drawLine(160, 180, hdg_nx, hdg_ny, ILI9341_WHITE);
+
+        if (prevDraw.heading != current_hdg) {
+            tft.fillRect(150, 175, 20, 8, ILI9341_BLACK);
+            tft.setTextSize(1);
+            tft.setTextColor(ILI9341_CYAN, ILI9341_BLACK);
+            tft.setCursor(150, 175);
+            tft.printf("%3d", current_hdg);
+        }
+
+        // --- 5. Bottom-Left GPS Vector Map Grid ---
+        bool mapTypeChanged = (useArakawaMap != prevDraw.useArakawaMap);
+        bool gpsStateChanged = (flightData.has_gpsPos != prevDraw.has_gpsPos);
+
+        if (mapTypeChanged || gpsStateChanged) {
+            // Clear Map inside frame
+            tft.fillRect(6, 126, 98, 93, ILI9341_BLACK);
+        }
+
+        if (!flightData.has_gpsPos) {
+            tft.setTextSize(1);
+            tft.setTextColor(ILI9341_RED, ILI9341_BLACK);
+            tft.setCursor(38, 170);
+            tft.print("NO GPS");
+        } else {
+            // Erase previous GPS Position dot
+            if (prevDraw.has_gpsPos && !mapTypeChanged) {
+                float old_mx, old_my;
+                if (!prevDraw.useArakawaMap) {
+                    old_mx = 5.0f + 100.0f * (prevDraw.gpsLon - 136.2590f) / 0.0070f;
+                    old_my = 125.0f + 95.0f * (1.0f - (prevDraw.gpsLat - 35.2750f) / 0.0060f);
+                } else {
+                    old_mx = 5.0f + 100.0f * (prevDraw.gpsLon - 139.7950f) / 0.0080f;
+                    old_my = 125.0f + 95.0f * (1.0f - (prevDraw.gpsLat - 35.7330f) / 0.0060f);
+                }
+                tft.fillCircle((int)constrain(old_mx, 8.0f, 102.0f), (int)constrain(old_my, 128.0f, 217.0f), 2, ILI9341_BLACK);
+            }
+
+            // Redraw Shoreline/Rivers (Fast and prevents erase artifacts)
+            if (!useArakawaMap) {
+                // Matsubara Beach Shoreline (Green)
+                tft.drawLine(10, 190, 95, 135, ILI9341_GREEN);
+                // Launch Platform (Yellow)
+                tft.drawLine(50, 162, 35, 147, ILI9341_YELLOW);
+                
+                // Labels
+                tft.setTextSize(1);
+                tft.setTextColor(ILI9341_BLUE, ILI9341_BLACK);
+                tft.setCursor(10, 203); tft.print("BIWA LAKE");
+                tft.setTextColor(ILI9341_GREEN, ILI9341_BLACK);
+                tft.setCursor(10, 131); tft.print("MATSUBARA");
+            } else {
+                // Sumida River (Blue)
+                tft.drawLine(10, 135, 95, 190, ILI9341_BLUE);
+                // TMCIT Campus boundary (Green)
+                tft.drawRect(50, 155, 16, 16, ILI9341_GREEN);
+                
+                // Labels
+                tft.setTextSize(1);
+                tft.setTextColor(ILI9341_WHITE, ILI9341_BLACK);
+                tft.setCursor(10, 203); tft.print("ARAKAWA");
+                tft.setTextColor(ILI9341_GREEN, ILI9341_BLACK);
+                tft.setCursor(10, 131); tft.print("TMCIT");
+            }
+
+            // Draw new GPS Position dot (Red)
+            float mx, my;
+            if (!useArakawaMap) {
+                mx = 5.0f + 100.0f * (flightData.gpsLon - 136.2590f) / 0.0070f;
+                my = 125.0f + 95.0f * (1.0f - (flightData.gpsLat - 35.2750f) / 0.0060f);
+            } else {
+                mx = 5.0f + 100.0f * (flightData.gpsLon - 139.7950f) / 0.0080f;
+                my = 125.0f + 95.0f * (1.0f - (flightData.gpsLat - 35.7330f) / 0.0060f);
+            }
+            int draw_mx = (int)constrain(mx, 8.0f, 102.0f);
+            int draw_my = (int)constrain(my, 128.0f, 217.0f);
+            tft.fillCircle(draw_mx, draw_my, 2, ILI9341_RED);
+        }
+
+        // --- 6. Bottom-Right CAN Status Grid ---
+        tft.setTextSize(1);
+        tft.setTextColor(ILI9341_CYAN, ILI9341_BLACK);
+        tft.setCursor(220, 130);
+        tft.print("CAN STATUS:");
+        
+        drawNodeStatus(220, 142, "MN", lastRxMain);
+        drawNodeStatus(265, 142, "PT", lastRxPitot);
+        
+        drawNodeStatus(220, 154, "RD", lastRxRudder);
+        drawNodeStatus(265, 154, "GP", lastRxGPS);
+        
+        drawNodeStatus(220, 166, "AL", lastRxAlt);
+        drawNodeStatus(265, 166, "SB", lastRxBridge);
+
+        tft.setTextColor(ILI9341_WHITE, ILI9341_BLACK);
+        tft.setCursor(220, 182);
+        tft.printf("MAP:%s ", useArakawaMap ? "TMCIT" : "SHIGA");
+        
+        tft.setCursor(220, 194);
+        if (flightData.has_gpsPos) {
+            tft.printf("SPD:%4.1f", flightData.gpsSpeed);
+        } else {
+            tft.print("SPD: No G");
+        }
+
+        // Update previous values for next refresh cycle
+        prevDraw.airspeed = current_speed;
+        prevDraw.pitch = current_pitch;
+        prevDraw.roll = current_roll;
+        prevDraw.alt = current_alt;
+        prevDraw.heading = current_hdg;
+        prevDraw.gpsLat = flightData.gpsLat;
+        prevDraw.gpsLon = flightData.gpsLon;
+        prevDraw.has_gpsPos = flightData.has_gpsPos;
+        prevDraw.useArakawaMap = useArakawaMap;
+
+        // Teleplot output
         if (flightData.has_batteryVolt) Serial.printf(">disp_bat:%.2f\n", flightData.batteryVolt);
         if (flightData.has_pitotPress32) Serial.printf(">disp_airspeed:%.2f\n", flightData.pitotPress32);
         if (flightData.has_altLidar) Serial.printf(">disp_alt_lidar:%.2f\n", flightData.altLidar);

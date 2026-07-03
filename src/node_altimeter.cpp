@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <Wire.h>
 #include "driver/twai.h"
 
 // TSD20 Lidar
@@ -18,9 +19,38 @@
 #define LIDAR_CAN_ID      0x100
 #define ULTRASONIC_CAN_ID 0x101
 
+// I2C Slave Settings (per altimeter_spec.md)
+#define I2C_SLAVE_ADDR 0x30
+volatile uint8_t i2cRegisterPointer = 0x00;
+
 // Shared data variables
 volatile uint16_t lidarDistance_mm = 0;
 volatile uint8_t ultrasoundDistance_cm = 0;
+
+void onI2CReceive(int numBytes) {
+    if (numBytes > 0) {
+        i2cRegisterPointer = Wire.read();
+        // Discard any additional bytes written
+        while (Wire.available()) {
+            Wire.read();
+        }
+    }
+}
+
+void onI2CRequest() {
+    uint8_t buffer[4];
+    buffer[0] = (lidarDistance_mm >> 8) & 0xFF;
+    buffer[1] = lidarDistance_mm & 0xFF;
+    buffer[2] = ultrasoundDistance_cm;
+    buffer[3] = 0xAA; // Normal status flag
+
+    if (i2cRegisterPointer < 4) {
+        int bytesToSend = 4 - i2cRegisterPointer;
+        Wire.write((const uint8_t*)&buffer[i2cRegisterPointer], bytesToSend);
+    } else {
+        Wire.write(0x00);
+    }
+}
 
 void initCAN() {
     twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(CAN_TX_PIN, CAN_RX_PIN, TWAI_MODE_NORMAL);
@@ -74,6 +104,12 @@ void setup() {
     pinMode(URM_TRIG_PIN, OUTPUT);
     pinMode(URM_ECHO_PIN, INPUT);
     digitalWrite(URM_TRIG_PIN, LOW);
+
+    // Initialize I2C Slave at 0x30 (per altimeter_spec.md)
+    Wire.begin(I2C_SLAVE_ADDR);
+    Wire.onReceive(onI2CReceive);
+    Wire.onRequest(onI2CRequest);
+    Serial.println("[OK] I2C Slave initialized at 0x30");
 
     // Initialize CAN (500kbps)
     initCAN();

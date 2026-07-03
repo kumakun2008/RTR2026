@@ -65,6 +65,14 @@ struct DisplayTelemetry {
 volatile bool isOtaMode = false;
 uint32_t otaTimeoutStart = 0;
 
+// CAN node communication timestamps
+volatile uint32_t lastRxMain = 0;
+volatile uint32_t lastRxPitot = 0;
+volatile uint32_t lastRxRudder = 0;
+volatile uint32_t lastRxGPS = 0;
+volatile uint32_t lastRxAlt = 0;
+volatile uint32_t lastRxBridge = 0;
+
 void taskSensorAcquisition(void* pvParameters);
 void taskCANReceive(void* pvParameters);
 void taskSDSync(void* pvParameters);
@@ -159,6 +167,8 @@ void taskSensorAcquisition(void* pvParameters) {
 
         if (loopCounter % 4 != 0) {
             if (mainBaro.read(baroData)) {
+                flightData.baroPress = baroData.pressure;
+                flightData.baroTemp = baroData.temperature;
                 sdLogger.logPacket(LOG_ID_MAIN_BARO, &baroData, sizeof(baroData), timestamp);
                 canBus.transmitScaled(CAN_ID_MAIN_PRESS, baroData.pressure * 100.0f, CAN_Scale::PRESSURE);
                 canBus.transmitScaled(CAN_ID_MAIN_TEMP, baroData.temperature, CAN_Scale::TEMP);
@@ -224,30 +234,47 @@ void taskCANReceive(void* pvParameters) {
                 return (float)raw / scale;
             };
 
+            lastRxMain = millis();
+
             if (rxId == CAN_ID_PITOT_AIRSPEED) {
                 flightData.pitotPress32 = getFloat(rxData, CAN_Scale::PRESSURE);
+                lastRxPitot = millis();
             }
             else if (rxId == CAN_ID_PITOT_AOA) {
                 flightData.pitotPress31_1 = getFloat(rxData, CAN_Scale::PRESSURE);
+                lastRxPitot = millis();
             }
             else if (rxId == CAN_ID_PITOT_AOS) {
                 flightData.pitotPress31_2 = getFloat(rxData, CAN_Scale::PRESSURE);
+                lastRxPitot = millis();
+            }
+            else if (rxId == CAN_ID_PITOT_PITCH) {
+                flightData.gyro[0] = getFloat(rxData, CAN_Scale::ANGLE);
+                lastRxPitot = millis();
+            }
+            else if (rxId == CAN_ID_PITOT_ROLL) {
+                flightData.gyro[1] = getFloat(rxData, CAN_Scale::ANGLE);
+                lastRxPitot = millis();
             }
             else if (rxId == CAN_ID_PITOT_TEMP) {
                 flightData.pitotTemp32 = getFloat(rxData, CAN_Scale::TEMP);
+                lastRxPitot = millis();
             }
             else if (rxId == CAN_ID_RUDDER_ANGLE) {
                 flightData.rudderAngle = getFloat(rxData, CAN_Scale::ANGLE);
+                lastRxRudder = millis();
             }
             else if (rxId == CAN_ID_ALT_LIDAR) {
                 uint16_t rawLidar = (uint16_t)((rxData[0] << 8) | rxData[1]);
                 flightData.altLidar = (float)rawLidar / 1000.0f;
                 flightData.has_altLidar = true;
+                lastRxAlt = millis();
             }
             else if (rxId == CAN_ID_ALT_US) {
                 uint8_t rawUS = rxData[0];
                 flightData.altUS = (float)rawUS / 100.0f;
                 flightData.has_altUS = true;
+                lastRxAlt = millis();
             }
             else if (rxId == CAN_ID_GPS_LAT_UPPER) {
                 uint32_t upper;
@@ -275,21 +302,28 @@ void taskCANReceive(void* pvParameters) {
             }
             else if (rxId == CAN_ID_GPS_ALT) {
                 flightData.gpsAlt = getFloat(rxData, CAN_Scale::GPS_ALT);
+                lastRxGPS = millis();
             }
             else if (rxId == CAN_ID_GPS_SPEED) {
                 flightData.gpsSpeed = getFloat(rxData, CAN_Scale::GPS_SPEED);
+                lastRxGPS = millis();
             }
             else if (rxId == CAN_ID_GPS_AZIMUTH) {
                 flightData.gpsHeading = (uint16_t)(getFloat(rxData, CAN_Scale::GPS_AZIMUTH));
+                lastRxGPS = millis();
             }
             
             if (updateGPSLat) {
                 memcpy(&flightData.gpsLat, &gpsLatRaw, 8);
                 updateGPSLat = false;
+                lastRxGPS = millis();
+                flightData.gpsSats = 8;
+                flightData.gpsFix = 2;
             }
             if (updateGPSLon) {
                 memcpy(&flightData.gpsLon, &gpsLonRaw, 8);
                 updateGPSLon = false;
+                lastRxGPS = millis();
             }
 
             // Central Blackbox SD Logging
@@ -371,13 +405,29 @@ void taskTelemetry(void* pvParameters) {
         } else {
             telemetry.process();
             
-            char stateStr[128];
+            // Format expanded telemetry data to Bluetooth Android app
+            // Format: $TEL,battery,pressure,altitude,gpsSats,airspeed,pitch,roll,heading,rudder,lat,lon,gpsAlt,lastRxMain,lastRxPitot,lastRxRudder,lastRxGPS,lastRxAlt,lastRxBridge*
+            char stateStr[256];
             snprintf(stateStr, sizeof(stateStr), 
-                     "$TEL,%.2f,%.2f,%.2f,%d*", 
+                     "$TEL,%.2f,%.2f,%.2f,%d,%.2f,%.2f,%.2f,%d,%.2f,%.6f,%.6f,%.2f,%u,%u,%u,%u,%u,%u*", 
                      battery.readVoltage(), 
                      flightData.baroPress,
                      flightData.altLidar,
-                     flightData.gpsSats);
+                     flightData.gpsSats,
+                     flightData.pitotPress32, // airspeed
+                     flightData.gyro[0],      // pitch
+                     flightData.gyro[1],      // roll
+                     flightData.gpsHeading,   // heading
+                     flightData.rudderAngle,  // rudder angle
+                     flightData.gpsLat,       // lat
+                     flightData.gpsLon,       // lon
+                     flightData.gpsAlt,       // gpsAlt
+                     millis(),                // lastRxMain
+                     lastRxPitot,
+                     lastRxRudder,
+                     lastRxGPS,
+                     lastRxAlt,
+                     lastRxBridge);
             telemetry.sendText(stateStr);
         }
         esp_task_wdt_reset();

@@ -18,7 +18,7 @@
 #define CAN_TX_PIN   32
 #define CAN_RX_PIN   33 
 
-I2CManager i2cBus(Wire, I2C_SDA_PIN, I2C_SCL_PIN, 600000);
+I2CManager i2cBus(Wire, I2C_SDA_PIN, I2C_SCL_PIN, 400000);
 SDLogger sdLogger;
 CANManager canBus;
 

@@ -6,256 +6,362 @@
     android:layout_height="match_parent"
     android:orientation="vertical"
     android:background="@color/bg_dark"
-    android:padding="16dp"
+    android:padding="8dp"
     tools:context=".MainActivity">
 
-    <!-- Header Section -->
-    <RelativeLayout
+    <!-- Top Header and Connection Bar -->
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="16dp">
-
-        <LinearLayout
+        android:orientation="vertical"
+        android:layout_marginBottom="4dp">
+        <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:orientation="vertical">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Team ЯTR Glider"
-                android:textColor="@color/accent_cyan"
-                android:textSize="12sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Telemetry UI"
-                android:textColor="@color/text_primary"
-                android:textSize="24sp"
-                android:textStyle="bold" />
-        </LinearLayout>
-
-        <Button
-            android:id="@+id/btnConnect"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_alignParentEnd="true"
-            android:layout_centerVertical="true"
-            android:backgroundTint="@color/accent_blue"
-            android:text="Connect"
-            android:textColor="@color/text_primary"
+            android:text="Team ЯTR Glider Avionics"
+            android:textColor="@color/accent_cyan"
             android:textSize="12sp"
-            android:textStyle="bold"
-            app:cornerRadius="8dp" />
-    </RelativeLayout>
-
-    <!-- Telemetry Cards Grid -->
-    <GridLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:columnCount="2"
-        android:rowCount="2"
-        android:alignmentMode="alignMargins"
-        android:columnOrderPreserved="false"
-        android:layout_marginBottom="16dp">
-
-        <!-- Battery Voltage Card -->
-        <androidx.cardview.widget.CardView
-            android:layout_width="0dp"
+            android:textStyle="bold" />
+        <TextView
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_columnWeight="1"
-            android:layout_margin="6dp"
-            app:cardCornerRadius="12dp"
-            app:cardBackgroundColor="@color/card_dark"
-            app:cardElevation="0dp">
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="16dp">
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="BATTERY"
-                    android:textColor="@color/text_secondary"
-                    android:textSize="11sp"
-                    android:textStyle="bold" />
-                <TextView
-                    android:id="@+id/tvBattery"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="0.00 V"
-                    android:textColor="@color/accent_green"
-                    android:textSize="22sp"
-                    android:textStyle="bold"
-                    android:layout_marginTop="4dp"/>
-            </LinearLayout>
-        </androidx.cardview.widget.CardView>
+            android:text="Android Telemetry Dashboard"
+            android:textColor="@color/text_primary"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+    </LinearLayout>
 
-        <!-- Air Pressure Card -->
-        <androidx.cardview.widget.CardView
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_columnWeight="1"
-            android:layout_margin="6dp"
-            app:cardCornerRadius="12dp"
-            app:cardBackgroundColor="@color/card_dark"
-            app:cardElevation="0dp">
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="16dp">
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="AIR PRESSURE"
-                    android:textColor="@color/text_secondary"
-                    android:textSize="11sp"
-                    android:textStyle="bold" />
-                <TextView
-                    android:id="@+id/tvPressure"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="0.0 hPa"
-                    android:textColor="@color/text_primary"
-                    android:textSize="22sp"
-                    android:textStyle="bold"
-                    android:layout_marginTop="4dp"/>
-            </LinearLayout>
-        </androidx.cardview.widget.CardView>
-
-        <!-- Altitude Card -->
-        <androidx.cardview.widget.CardView
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_columnWeight="1"
-            android:layout_margin="6dp"
-            app:cardCornerRadius="12dp"
-            app:cardBackgroundColor="@color/card_dark"
-            app:cardElevation="0dp">
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="16dp">
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="LIDAR ALTITUDE"
-                    android:textColor="@color/text_secondary"
-                    android:textSize="11sp"
-                    android:textStyle="bold" />
-                <TextView
-                    android:id="@+id/tvAltitude"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="0.00 m"
-                    android:textColor="@color/accent_cyan"
-                    android:textSize="22sp"
-                    android:textStyle="bold"
-                    android:layout_marginTop="4dp"/>
-            </LinearLayout>
-        </androidx.cardview.widget.CardView>
-
-        <!-- GPS Sats Card -->
-        <androidx.cardview.widget.CardView
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_columnWeight="1"
-            android:layout_margin="6dp"
-            app:cardCornerRadius="12dp"
-            app:cardBackgroundColor="@color/card_dark"
-            app:cardElevation="0dp">
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="16dp">
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="GPS SATELLITES"
-                    android:textColor="@color/text_secondary"
-                    android:textSize="11sp"
-                    android:textStyle="bold" />
-                <TextView
-                    android:id="@+id/tvGPSSats"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="0 (No Fix)"
-                    android:textColor="@color/text_primary"
-                    android:textSize="22sp"
-                    android:textStyle="bold"
-                    android:layout_marginTop="4dp"/>
-            </LinearLayout>
-        </androidx.cardview.widget.CardView>
-    </GridLayout>
-
-    <!-- Real-time Chart Section -->
-    <androidx.cardview.widget.CardView
-        android:layout_width="match_parent"
-        android:layout_height="180dp"
-        android:layout_marginBottom="16dp"
-        app:cardCornerRadius="12dp"
-        app:cardBackgroundColor="@color/card_dark"
-        app:cardElevation="0dp">
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:orientation="vertical"
-            android:padding="12dp">
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="LIVE ALTITUDE GRAPH (M)"
-                android:textColor="@color/text_secondary"
-                android:textSize="10sp"
-                android:textStyle="bold"
-                android:layout_marginBottom="8dp"/>
-            <com.rtr.telemetry.LineChartView
-                android:id="@+id/lineChartView"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"/>
-        </LinearLayout>
-    </androidx.cardview.widget.CardView>
-
-    <!-- Control Actions Panel -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:layout_marginBottom="16dp"
-        android:weightSum="2">
+        android:layout_marginBottom="8dp"
+        android:weightSum="3">
 
         <Button
             android:id="@+id/btnCalibrate"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:layout_marginEnd="6dp"
+            android:layout_marginEnd="4dp"
             android:backgroundTint="@color/accent_cyan"
-            android:text="Calibrate Zero"
+            android:text="CALIB ZERO"
             android:textColor="@color/bg_dark"
+            android:textSize="10sp"
             android:textStyle="bold"
-            app:cornerRadius="8dp" />
+            android:paddingLeft="2dp"
+            android:paddingRight="2dp"
+            android:insetLeft="0dp"
+            android:insetRight="0dp"
+            android:singleLine="true"
+            app:cornerRadius="6dp" />
 
         <Button
             android:id="@+id/btnStartOTA"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:layout_marginStart="6dp"
+            android:layout_marginHorizontal="2dp"
             android:backgroundTint="@color/accent_red"
-            android:text="Start OTA Update"
+            android:text="START OTA"
             android:textColor="@color/text_primary"
+            android:textSize="10sp"
             android:textStyle="bold"
-            app:cornerRadius="8dp" />
+            android:paddingLeft="2dp"
+            android:paddingRight="2dp"
+            android:insetLeft="0dp"
+            android:insetRight="0dp"
+            android:singleLine="true"
+            app:cornerRadius="6dp" />
+
+        <Button
+            android:id="@+id/btnConnect"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="4dp"
+            android:backgroundTint="@color/accent_blue"
+            android:text="CONNECT"
+            android:textColor="@color/text_primary"
+            android:textSize="10sp"
+            android:textStyle="bold"
+            android:paddingLeft="2dp"
+            android:paddingRight="2dp"
+            android:insetLeft="0dp"
+            android:insetRight="0dp"
+            android:singleLine="true"
+            app:cornerRadius="6dp" />
     </LinearLayout>
 
-    <!-- Console Logging Section -->
+    <!-- Top Telemetry Status Strip -->
+    <androidx.cardview.widget.CardView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="8dp"
+        app:cardCornerRadius="8dp"
+        app:cardBackgroundColor="@color/card_dark"
+        app:cardElevation="0dp">
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:padding="8dp"
+            android:weightSum="4">
+
+            <TextView
+                android:id="@+id/tvBattery"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="BAT: 0.00V"
+                android:textColor="@color/accent_green"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:gravity="center" />
+
+            <TextView
+                android:id="@+id/tvPressure"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="BARO: 0.0 hPa"
+                android:textColor="@color/text_primary"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:gravity="center" />
+
+            <TextView
+                android:id="@+id/tvAltitude"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="LALT: 0.00m"
+                android:textColor="@color/accent_cyan"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:gravity="center" />
+
+            <TextView
+                android:id="@+id/tvGPSSats"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="GPS: 0 Sat"
+                android:textColor="@color/text_primary"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:gravity="center" />
+        </LinearLayout>
+    </androidx.cardview.widget.CardView>
+
+    <!-- Main flight panel 3x2 Grid -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="3.2"
+        android:orientation="vertical"
+        android:weightSum="2"
+        android:layout_marginBottom="8dp">
+
+        <!-- Top Row: ASI, ATT, ALT -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:orientation="horizontal"
+            android:weightSum="3"
+            android:layout_marginBottom="8dp">
+
+            <com.rtr.telemetry.AirspeedIndicatorView
+                android:id="@+id/asiView"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:layout_marginEnd="4dp" />
+
+            <com.rtr.telemetry.AttitudeIndicatorView
+                android:id="@+id/attView"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:layout_marginEnd="4dp"
+                android:layout_marginStart="4dp" />
+
+            <com.rtr.telemetry.AltimeterIndicatorView
+                android:id="@+id/altView"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:layout_marginStart="4dp" />
+        </LinearLayout>
+
+        <!-- Bottom Row: Map, HDG, CAN Status -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:orientation="horizontal"
+            android:weightSum="3">
+
+            <!-- Google Map Frame -->
+            <androidx.cardview.widget.CardView
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:layout_marginEnd="4dp"
+                app:cardCornerRadius="12dp"
+                app:cardBackgroundColor="@color/card_dark"
+                app:cardElevation="0dp">
+                <com.google.android.gms.maps.MapView
+                    android:id="@+id/mapView"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent" />
+            </androidx.cardview.widget.CardView>
+
+            <com.rtr.telemetry.HeadingIndicatorView
+                android:id="@+id/hdgView"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:layout_marginEnd="4dp"
+                android:layout_marginStart="4dp" />
+
+            <!-- CAN Monitor 6-system Status Grid -->
+            <androidx.cardview.widget.CardView
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:layout_marginStart="4dp"
+                app:cardCornerRadius="12dp"
+                app:cardBackgroundColor="@color/card_dark"
+                app:cardElevation="0dp">
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:orientation="vertical"
+                    android:padding="8dp">
+                    
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="CAN NODES"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="10sp"
+                        android:textStyle="bold"
+                        android:gravity="center"
+                        android:layout_marginBottom="6dp" />
+
+                    <GridLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:columnCount="2"
+                        android:rowCount="3"
+                        android:alignmentMode="alignMargins"
+                        android:columnOrderPreserved="false">
+
+                        <!-- Main Board -->
+                        <TextView
+                            android:id="@+id/tvNodeMain"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_columnWeight="1"
+                            android:layout_rowWeight="1"
+                            android:layout_margin="3dp"
+                            android:background="@android:color/holo_red_dark"
+                            android:text="MN"
+                            android:textColor="@color/text_primary"
+                            android:textStyle="bold"
+                            android:textSize="11sp"
+                            android:gravity="center"
+                            android:padding="4dp" />
+
+                        <!-- Pitot Board -->
+                        <TextView
+                            android:id="@+id/tvNodePitot"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_columnWeight="1"
+                            android:layout_rowWeight="1"
+                            android:layout_margin="3dp"
+                            android:background="@android:color/holo_red_dark"
+                            android:text="PT"
+                            android:textColor="@color/text_primary"
+                            android:textStyle="bold"
+                            android:textSize="11sp"
+                            android:gravity="center"
+                            android:padding="4dp" />
+
+                        <!-- Rudder Board -->
+                        <TextView
+                            android:id="@+id/tvNodeRudder"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_columnWeight="1"
+                            android:layout_rowWeight="1"
+                            android:layout_margin="3dp"
+                            android:background="@android:color/holo_red_dark"
+                            android:text="RD"
+                            android:textColor="@color/text_primary"
+                            android:textStyle="bold"
+                            android:textSize="11sp"
+                            android:gravity="center"
+                            android:padding="4dp" />
+
+                        <!-- GPS Board -->
+                        <TextView
+                            android:id="@+id/tvNodeGPS"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_columnWeight="1"
+                            android:layout_rowWeight="1"
+                            android:layout_margin="3dp"
+                            android:background="@android:color/holo_red_dark"
+                            android:text="GP"
+                            android:textColor="@color/text_primary"
+                            android:textStyle="bold"
+                            android:textSize="11sp"
+                            android:gravity="center"
+                            android:padding="4dp" />
+
+                        <!-- Altimeter Board -->
+                        <TextView
+                            android:id="@+id/tvNodeAltimeter"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_columnWeight="1"
+                            android:layout_rowWeight="1"
+                            android:layout_margin="3dp"
+                            android:background="@android:color/holo_red_dark"
+                            android:text="AL"
+                            android:textColor="@color/text_primary"
+                            android:textStyle="bold"
+                            android:textSize="11sp"
+                            android:gravity="center"
+                            android:padding="4dp" />
+
+                        <!-- Sim Bridge -->
+                        <TextView
+                            android:id="@+id/tvNodeBridge"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_columnWeight="1"
+                            android:layout_rowWeight="1"
+                            android:layout_margin="3dp"
+                            android:background="@android:color/holo_red_dark"
+                            android:text="SB"
+                            android:textColor="@color/text_primary"
+                            android:textStyle="bold"
+                            android:textSize="11sp"
+                            android:gravity="center"
+                            android:padding="4dp" />
+
+                    </GridLayout>
+                </LinearLayout>
+            </androidx.cardview.widget.CardView>
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- Bottom Console Logging -->
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
@@ -263,27 +369,27 @@
         android:textColor="@color/text_secondary"
         android:textSize="10sp"
         android:textStyle="bold"
-        android:layout_marginBottom="4dp"/>
+        android:layout_marginBottom="2dp"/>
     <androidx.cardview.widget.CardView
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        app:cardCornerRadius="12dp"
+        app:cardCornerRadius="8dp"
         app:cardBackgroundColor="@color/card_dark"
         app:cardElevation="0dp">
         <ScrollView
             android:id="@+id/scrollConsole"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:padding="12dp"
+            android:padding="8dp"
             android:scrollbarThumbVertical="@android:color/transparent">
             <TextView
                 android:id="@+id/tvConsole"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Disconnected. Click 'Connect' to pair with RTR_Main_Avionics Bluetooth."
+                android:text="Disconnected. Click 'CONNECT' to pair."
                 android:textColor="@color/text_secondary"
-                android:textSize="11sp"
+                android:textSize="10sp"
                 android:fontFamily="monospace" />
         </ScrollView>
     </androidx.cardview.widget.CardView>

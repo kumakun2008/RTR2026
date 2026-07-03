@@ -31,13 +31,13 @@ bool ICM42688Sensor::begin() {
     }
     delay(10); // Wait for sensor to boot up
     
-    // ACCEL_CONFIG0 (0x4F): +/- 8g range (0b01 << 5), 100Hz ODR (0b1000) -> 0x28
-    if (!_i2c.writeRegister(_address, 0x4F, 0x28)) {
+    // GYRO_CONFIG0 (0x4F): +/- 2000 dps range (0b000 << 5), 100Hz ODR (0b1000) -> 0x08
+    if (!_i2c.writeRegister(_address, 0x4F, 0x08)) {
         return false;
     }
     
-    // GYRO_CONFIG0 (0x50): +/- 2000 dps range (0b000 << 5), 100Hz ODR (0b1000) -> 0x08
-    if (!_i2c.writeRegister(_address, 0x50, 0x08)) {
+    // ACCEL_CONFIG0 (0x50): +/- 8g range (0b01 << 5), 100Hz ODR (0b1000) -> 0x28
+    if (!_i2c.writeRegister(_address, 0x50, 0x28)) {
         return false;
     }
     
@@ -92,23 +92,30 @@ bool BM1422Sensor::begin() {
         return false;
     }
     
-    // Put BM1422 in Standby: CNTL1 (0x0D) = 0x00
-    if (!_i2c.writeRegister(_address, 0x0D, 0x00)) {
+    // Put BM1422 in Standby: CNTL1 (0x1B) = 0x00
+    if (!_i2c.writeRegister(_address, 0x1B, 0x00)) {
         return false;
     }
     
-    // Select 14-bit Mode: CNTL4 (0x1D) = 0x02
-    if (!_i2c.writeRegister(_address, 0x1D, 0x02)) {
+    // Reset Release: Write 0x0000 to CNTL4 (0x5C) (two bytes LSB, MSB)
+    uint8_t cntl4Data[3] = { 0x5C, 0x00, 0x00 };
+    if (!_i2c.writeRaw(_address, cntl4Data, 3)) {
         return false;
     }
     
-    // Continuous Mode, ODR 100Hz: CNTL1 (0x0D) = 0x81 (Bit 7: Active, Bit 1:0 = 01 for 100Hz)
-    if (!_i2c.writeRegister(_address, 0x0D, 0x81)) {
+    // Configure CNTL1 (0x1B) for 14-bit continuous mode at 100Hz ODR (0xC4)
+    // PC1 (Active) = 1 (bit 7)
+    // OUT_BIT (14-bit) = 1 (bit 6)
+    // RST_LV (Release) = 0 (bit 5)
+    // ODR (100Hz) = 10 (bits 2:1 -> 0x04)
+    // FS1 (Continuous) = 0 (bit 0)
+    // Result: 0x80 | 0x40 | 0x04 = 0xC4
+    if (!_i2c.writeRegister(_address, 0x1B, 0xC4)) {
         return false;
     }
     
-    // Start Measurement: CNTL3 (0x1C) = 0x40 (Force start or continuous conversion bit)
-    if (!_i2c.writeRegister(_address, 0x1C, 0x40)) {
+    // Start Measurement: CNTL3 (0x1D) = 0x40 (Force start or continuous conversion bit)
+    if (!_i2c.writeRegister(_address, 0x1D, 0x40)) {
         return false;
     }
     
@@ -129,10 +136,10 @@ bool BM1422Sensor::read(MagPayload& payload) {
     int16_t rawY = (int16_t)((rawData[3] << 8) | rawData[2]);
     int16_t rawZ = (int16_t)((rawData[5] << 8) | rawData[4]);
     
-    // BM1422 14-bit mode resolution is 120 LSB/uT
-    payload.mag_x = (float)rawX / 120.0f;
-    payload.mag_y = (float)rawY / 120.0f;
-    payload.mag_z = (float)rawZ / 120.0f;
+    // BM1422 14-bit mode resolution is 0.042 uT/LSB
+    payload.mag_x = (float)rawX * 0.042f;
+    payload.mag_y = (float)rawY * 0.042f;
+    payload.mag_z = (float)rawZ * 0.042f;
     
     return true;
 }
@@ -200,10 +207,16 @@ SDP3xSensor::SDP3xSensor(I2CManager& i2c, uint8_t address, bool isSDP32)
 }
 
 bool SDP3xSensor::begin() {
-    uint8_t cmd[2] = { 0x36, 0x15 };
+    // 1. Send Stop continuous measurement command to ensure sensor is in idle state
+    uint8_t stopCmd[2] = { 0x3F, 0xF9 };
+    _i2c.writeRaw(_address, stopCmd, 2);
+    delayMicroseconds(500); // Wait 500us for sensor to enter idle mode
+    
+    // 2. Start continuous differential pressure measurement with averaging: command 0x3615
+    uint8_t startCmd[2] = { 0x36, 0x15 };
     
     // Single non-blocking write attempt to avoid halting the main thread
-    if (!_i2c.writeRaw(_address, cmd, 2)) {
+    if (!_i2c.writeRaw(_address, startCmd, 2)) {
         return false;
     }
     
@@ -246,7 +259,7 @@ bool SDP3xSensor::read(float& pressure, float& temperature) {
     uint8_t rawData[6]; // [Pres_H, Pres_L, Pres_CRC, Temp_H, Temp_L, Temp_CRC]
     if (!_i2c.readRaw(_address, rawData, 6)) {
         _errorCount++;
-        if (_errorCount > 15) {
+        if (_errorCount > 100) { // Increased threshold to avoid aggressive bus recovery on transient NACKs
             _i2c.recoverBus();    // Clear hardware bus state
             _initialized = false; // Schedule non-blocking re-init
             _errorCount = 0;
@@ -267,7 +280,7 @@ bool SDP3xSensor::read(float& pressure, float& temperature) {
     // Verify CRC for pressure and temperature packages
     if (!checkSDP3xCRC(&rawData[0], 2, rawData[2]) || !checkSDP3xCRC(&rawData[3], 2, rawData[5])) {
         _errorCount++;
-        if (_errorCount > 15) {
+        if (_errorCount > 100) { // Increased threshold to avoid aggressive bus recovery
             _i2c.recoverBus();
             _initialized = false;
             _errorCount = 0;

@@ -22,7 +22,17 @@ Telemetry::~Telemetry() {
     }
 }
 
+static BluetoothSerial* g_btSerialPtr = nullptr;
+static volatile bool g_confirmPending = false;
+static void BTConfirmRequestCallback(uint32_t numVal) {
+    (void)numVal; // Unused
+    g_confirmPending = true;
+}
+
 bool Telemetry::begin(const char* deviceName) {
+    g_btSerialPtr = &_serialBT;
+    _serialBT.enableSSP();
+    _serialBT.onConfirmRequest(BTConfirmRequestCallback);
     if (_serialBT.begin(deviceName)) {
         _bluetoothActive = true;
         return true;
@@ -38,6 +48,12 @@ void Telemetry::sendText(const char* data) {
 
 void Telemetry::process() {
     if (!_bluetoothActive || _otaActive) return;
+    
+    // Process pairing confirmation asynchronously outside the GAP callback context to prevent stack crash
+    if (g_confirmPending && g_btSerialPtr != nullptr) {
+        g_btSerialPtr->confirmReply(true);
+        g_confirmPending = false;
+    }
     
     while (_serialBT.available() > 0) {
         char c = _serialBT.read();
