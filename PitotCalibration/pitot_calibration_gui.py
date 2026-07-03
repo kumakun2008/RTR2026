@@ -15,7 +15,7 @@ from matplotlib.figure import Figure
 class PitotCalibrationApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Team ЯTR - Pitot Tube Automatic Calibration Utility")
+        self.root.title("Team ЯTR - ピトー管 風洞校正支援システム (自動アライメント対応)")
         self.root.geometry("1300x850")
         self.root.configure(bg="#0F172A") # slate-900
 
@@ -106,88 +106,88 @@ class PitotCalibrationApp:
         main_pane.add(left_container, weight=1)
         
         # Serial Connection Card
-        conn_frame = ttk.LabelFrame(left_container, text="1. CONNECTION SETTINGS", padding=10)
+        conn_frame = ttk.LabelFrame(left_container, text="1. シリアル接続設定", padding=10)
         conn_frame.pack(fill=tk.X, pady=4, padx=5)
         
-        ttk.Label(conn_frame, text="COM Port:").grid(row=0, column=0, sticky=tk.W, pady=2)
+        ttk.Label(conn_frame, text="COMポート:").grid(row=0, column=0, sticky=tk.W, pady=2)
         self.port_var = tk.StringVar()
         self.port_combo = ttk.Combobox(conn_frame, textvariable=self.port_var, values=self.get_serial_ports(), width=15)
         self.port_combo.grid(row=0, column=1, pady=2, padx=5)
         
-        btn_refresh = ttk.Button(conn_frame, text="Refresh", command=self.refresh_ports, width=8)
+        btn_refresh = ttk.Button(conn_frame, text="再検出", command=self.refresh_ports, width=8)
         btn_refresh.grid(row=0, column=2, pady=2, padx=2)
         
-        ttk.Label(conn_frame, text="Baud Rate:").grid(row=1, column=0, sticky=tk.W, pady=2)
+        ttk.Label(conn_frame, text="ボーレート:").grid(row=1, column=0, sticky=tk.W, pady=2)
         self.baud_var = tk.StringVar(value="115200")
         self.baud_combo = ttk.Combobox(conn_frame, textvariable=self.baud_var, values=["9600", "38400", "57600", "115200"], width=15)
         self.baud_combo.grid(row=1, column=1, pady=2, padx=5, columnspan=2, sticky=tk.W)
         
-        self.btn_connect = ttk.Button(conn_frame, text="CONNECT", command=self.toggle_connection, style="Action.TButton")
+        self.btn_connect = ttk.Button(conn_frame, text="接続する", command=self.toggle_connection, style="Action.TButton")
         self.btn_connect.grid(row=2, column=0, columnspan=3, pady=6, sticky=tk.EW)
         
         # Environment settings
-        env_frame = ttk.LabelFrame(left_container, text="2. WIND TUNNEL ENVIRONMENT", padding=10)
+        env_frame = ttk.LabelFrame(left_container, text="2. 風洞環境パラメータ (空気密度用)", padding=10)
         env_frame.pack(fill=tk.X, pady=4, padx=5)
         
-        ttk.Label(env_frame, text="Baro Pressure (hPa):").grid(row=0, column=0, sticky=tk.W, pady=2)
+        ttk.Label(env_frame, text="現地大気圧 (hPa):").grid(row=0, column=0, sticky=tk.W, pady=2)
         self.press_entry = ttk.Entry(env_frame, width=10)
         self.press_entry.insert(0, "1013.25")
         self.press_entry.grid(row=0, column=1, pady=2, padx=5, sticky=tk.W)
         
-        # Temp & Humid overrides
+        # Temp & Humid overrides (Crucial due to board heating)
         self.temp_override_var = tk.BooleanVar(value=True)
-        self.chk_temp_override = ttk.Checkbutton(env_frame, text="Manual Temp (°C)", variable=self.temp_override_var)
+        self.chk_temp_override = ttk.Checkbutton(env_frame, text="温度を手動入力 (°C)", variable=self.temp_override_var)
         self.chk_temp_override.grid(row=1, column=0, sticky=tk.W, pady=2)
         self.temp_entry = ttk.Entry(env_frame, width=10)
         self.temp_entry.insert(0, "20.0")
         self.temp_entry.grid(row=1, column=1, pady=2, padx=5, sticky=tk.W)
         
         self.humid_override_var = tk.BooleanVar(value=True)
-        self.chk_humid_override = ttk.Checkbutton(env_frame, text="Manual Humidity (%)", variable=self.humid_override_var)
+        self.chk_humid_override = ttk.Checkbutton(env_frame, text="湿度を手動入力 (%)", variable=self.humid_override_var)
         self.chk_humid_override.grid(row=2, column=0, sticky=tk.W, pady=2)
         self.humid_entry = ttk.Entry(env_frame, width=10)
         self.humid_entry.insert(0, "50.0")
         self.humid_entry.grid(row=2, column=1, pady=2, padx=5, sticky=tk.W)
 
         # Wind Tunnel Calibration Run Card
-        calib_frame = ttk.LabelFrame(left_container, text="3. WIND TUNNEL CALIBRATION MODE", padding=10)
+        calib_frame = ttk.LabelFrame(left_container, text="3. 風洞キャリブレーション実行", padding=10)
         calib_frame.pack(fill=tk.X, pady=4, padx=5)
         
         # STEP A: Aerodynamic Zero Calibration
-        ttk.Label(calib_frame, text="Step A: Aerodynamic Zeroing (0° Alignment)", font=("Segoe UI", 9, "bold"), foreground="#06B6D4").pack(anchor=tk.W, pady=2)
-        self.btn_zero_calib = ttk.Button(calib_frame, text="Measure 0° Offset (5s Avg)", command=self.run_zero_calibration, style="Action.TButton")
+        ttk.Label(calib_frame, text="ステップA: 風中零点校正 (0°アライメント)", font=("Segoe UI", 9, "bold"), foreground="#06B6D4").pack(anchor=tk.W, pady=2)
+        self.btn_zero_calib = ttk.Button(calib_frame, text="0°基準オフセット計測 (5秒平均)", command=self.run_zero_calibration, style="Action.TButton")
         self.btn_zero_calib.pack(fill=tk.X, pady=3)
         
         offset_labels_frame = ttk.Frame(calib_frame)
         offset_labels_frame.pack(fill=tk.X, pady=2)
-        self.lbl_aoa_offset = ttk.Label(offset_labels_frame, text="AoA Offset: 0.00 Pa", font=("Segoe UI", 9), foreground="#10B981")
+        self.lbl_aoa_offset = ttk.Label(offset_labels_frame, text="AoAオフセット: 0.00 Pa", font=("Segoe UI", 9), foreground="#10B981")
         self.lbl_aoa_offset.pack(side=tk.LEFT, padx=5)
-        self.lbl_aos_offset = ttk.Label(offset_labels_frame, text="AoS Offset: 0.00 Pa", font=("Segoe UI", 9), foreground="#EC4899")
+        self.lbl_aos_offset = ttk.Label(offset_labels_frame, text="AoSオフセット: 0.00 Pa", font=("Segoe UI", 9), foreground="#EC4899")
         self.lbl_aos_offset.pack(side=tk.RIGHT, padx=5)
         
         ttk.Separator(calib_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=6)
         
         # STEP B: Angle Sweep Data Points
-        ttk.Label(calib_frame, text="Step B: Sweep Point Recording (Using BNO055)", font=("Segoe UI", 9, "bold"), foreground="#06B6D4").pack(anchor=tk.W, pady=2)
+        ttk.Label(calib_frame, text="ステップB: 計測ポイントの追加 (BNO姿勢角と同期)", font=("Segoe UI", 9, "bold"), foreground="#06B6D4").pack(anchor=tk.W, pady=2)
         
-        self.btn_record_point = ttk.Button(calib_frame, text="Record Current Position (3s Avg)", command=self.record_sweep_point, style="Start.TButton")
+        self.btn_record_point = ttk.Button(calib_frame, text="現在のポジションを記録 (3秒平均)", command=self.record_sweep_point, style="Start.TButton")
         self.btn_record_point.pack(fill=tk.X, pady=4)
         
-        self.lbl_status = ttk.Label(calib_frame, text="Status: IDLE", font=("Segoe UI", 10, "bold"), foreground="#94A3B8")
+        self.lbl_status = ttk.Label(calib_frame, text="ステータス: 待機中", font=("Segoe UI", 10, "bold"), foreground="#94A3B8")
         self.lbl_status.pack(pady=4)
         
         # Real-time Value Readouts Card
-        readout_frame = ttk.LabelFrame(left_container, text="4. REAL-TIME DATA READOUT", padding=10)
+        readout_frame = ttk.LabelFrame(left_container, text="4. リアルタイム数値表示", padding=10)
         readout_frame.pack(fill=tk.BOTH, expand=True, pady=4, padx=5)
         
         self.readout_labels = {}
         vars_to_show = [
-            ("Airspeed", "airspeed", " m/s", "#3B82F6"),
-            ("AoA Raw Pressure (P1)", "aoa_pa", " Pa", "#10B981"),
-            ("AoS Raw Pressure (P2)", "aos_pa", " Pa", "#EC4899"),
-            ("BNO055 Pitch (AoA)", "pitch", "°", "#F59E0B"),
-            ("BNO055 Yaw (AoS)", "yaw", "°", "#F59E0B"),
-            ("Calculated Air Density", "density", " kg/m³", "#06B6D4")
+            ("対気速度", "airspeed", " m/s", "#3B82F6"),
+            ("AoA 差圧センサー P1 (生値)", "aoa_pa", " Pa", "#10B981"),
+            ("AoS 差圧センサー P2 (生値)", "aos_pa", " Pa", "#EC4899"),
+            ("BNO055 ピッチ角 (AoA基準)", "pitch", "°", "#F59E0B"),
+            ("BNO055 ヨー角 (AoS基準)", "yaw", "°", "#F59E0B"),
+            ("算出空気密度 (ρ)", "density", " kg/m³", "#06B6D4")
         ]
         
         for idx, (label, key, unit, color) in enumerate(vars_to_show):
@@ -205,12 +205,12 @@ class PitotCalibrationApp:
         
         # Tab 1: Real-time Trends
         tab_trends = ttk.Frame(self.notebook, style="TFrame")
-        self.notebook.add(tab_trends, text="Real-time Trends")
+        self.notebook.add(tab_trends, text="リアルタイムグラフ推移")
         self.setup_trends_plot(tab_trends)
         
         # Tab 2: Calibration Sweep & Regression
         tab_calib = ttk.Frame(self.notebook, style="TFrame")
-        self.notebook.add(tab_calib, text="Göttingen Calibration Mode")
+        self.notebook.add(tab_calib, text="ゲッチンゲン校正モード")
         self.setup_calibration_tab(tab_calib)
 
     def setup_trends_plot(self, parent):
@@ -219,24 +219,24 @@ class PitotCalibrationApp:
         # Subplot 1: Speed and Pressures
         self.ax_press = self.fig_trends.add_subplot(211)
         self.ax_press.set_facecolor("#1E293B")
-        self.ax_press.set_title("Sensors Data", color="#06B6D4", fontsize=10, fontweight="bold")
+        self.ax_press.set_title("センサーデータ推移", color="#06B6D4", fontsize=10, fontweight="bold")
         self.ax_press.tick_params(colors="#94A3B8", labelsize=8)
         self.ax_press.grid(True, color="#334155", linestyle=":")
         
-        self.line_speed, = self.ax_press.plot([], [], label="Airspeed (m/s)", color="#3B82F6", lw=2)
-        self.line_aoa_p, = self.ax_press.plot([], [], label="AoA DP1 (Pa)", color="#10B981", lw=1.5)
-        self.line_aos_p, = self.ax_press.plot([], [], label="AoS DP2 (Pa)", color="#EC4899", lw=1.5)
+        self.line_speed, = self.ax_press.plot([], [], label="対気速度 (m/s)", color="#3B82F6", lw=2)
+        self.line_aoa_p, = self.ax_press.plot([], [], label="AoA 差圧 DP1 (Pa)", color="#10B981", lw=1.5)
+        self.line_aos_p, = self.ax_press.plot([], [], label="AoS 差圧 DP2 (Pa)", color="#EC4899", lw=1.5)
         self.ax_press.legend(facecolor="#1E293B", edgecolor="#334155", labelcolor="#F8FAFC", fontsize=8)
         
         # Subplot 2: IMU
         self.ax_att = self.fig_trends.add_subplot(212)
         self.ax_att.set_facecolor("#1E293B")
-        self.ax_att.set_title("BNO055 Angles", color="#06B6D4", fontsize=10, fontweight="bold")
+        self.ax_att.set_title("BNO055 角度推移", color="#06B6D4", fontsize=10, fontweight="bold")
         self.ax_att.tick_params(colors="#94A3B8", labelsize=8)
         self.ax_att.grid(True, color="#334155", linestyle=":")
         
-        self.line_pitch, = self.ax_att.plot([], [], label="Pitch Angle (°)", color="#F59E0B", lw=2)
-        self.line_yaw, = self.ax_att.plot([], [], label="Yaw Angle (°)", color="#10B981", lw=2)
+        self.line_pitch, = self.ax_att.plot([], [], label="ピッチ角 (Pitch) (°)", color="#F59E0B", lw=2)
+        self.line_yaw, = self.ax_att.plot([], [], label="ヨー角 (Yaw) (°)", color="#10B981", lw=2)
         self.ax_att.legend(facecolor="#1E293B", edgecolor="#334155", labelcolor="#F8FAFC", fontsize=8)
         
         self.fig_trends.tight_layout()
@@ -254,18 +254,18 @@ class PitotCalibrationApp:
         left_side.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5)
         
         # Treeview (points grid)
-        table_frame = ttk.LabelFrame(left_side, text="RECORDED CALIBRATION POINTS (3S TIME-AVERAGED)", padding=5)
+        table_frame = ttk.LabelFrame(left_side, text="記録された測定ポイント一覧 (3秒時間平均化処理済み)", padding=5)
         table_frame.pack(fill=tk.BOTH, expand=True, pady=5)
         
         columns = ("id", "speed", "aoa_p", "aos_p", "pitch", "yaw")
         self.tree_points = ttk.Treeview(table_frame, columns=columns, show="headings", height=8)
         
         self.tree_points.heading("id", text="ID")
-        self.tree_points.heading("speed", text="Airspeed (m/s)")
-        self.tree_points.heading("aoa_p", text="DP_AoA Corr (Pa)")
-        self.tree_points.heading("aos_p", text="DP_AoS Corr (Pa)")
-        self.tree_points.heading("pitch", text="BNO Pitch (AoA) (°)")
-        self.tree_points.heading("yaw", text="BNO Yaw (AoS) (°)")
+        self.tree_points.heading("speed", text="対気速度 (m/s)")
+        self.tree_points.heading("aoa_p", text="補正後 AoA差圧 (Pa)")
+        self.tree_points.heading("aos_p", text="補正後 AoS差圧 (Pa)")
+        self.tree_points.heading("pitch", text="BNOピッチ角 (迎角) (°)")
+        self.tree_points.heading("yaw", text="BNOヨー角 (横滑り角) (°)")
         
         self.tree_points.column("id", width=40, anchor=tk.CENTER)
         self.tree_points.column("speed", width=100, anchor=tk.CENTER)
@@ -280,31 +280,31 @@ class PitotCalibrationApp:
         tbl_btn_box = ttk.Frame(left_side, style="TFrame")
         tbl_btn_box.pack(fill=tk.X, pady=5)
         
-        self.btn_clear_points = ttk.Button(tbl_btn_box, text="Clear Selected", command=self.clear_selected_point, style="Stop.TButton")
+        self.btn_clear_points = ttk.Button(tbl_btn_box, text="選択した行を削除", command=self.clear_selected_point, style="Stop.TButton")
         self.btn_clear_points.pack(side=tk.LEFT, padx=5)
         
-        self.btn_clear_all = ttk.Button(tbl_btn_box, text="Clear All Points", command=self.clear_all_points, style="Stop.TButton")
+        self.btn_clear_all = ttk.Button(tbl_btn_box, text="全データをクリア", command=self.clear_all_points, style="Stop.TButton")
         self.btn_clear_all.pack(side=tk.LEFT, padx=5)
         
-        self.btn_calc_fit = ttk.Button(tbl_btn_box, text="COMPUTE CALIBRATION COEFFICIENTS (K)", command=self.calculate_regression, style="Action.TButton")
+        self.btn_calc_fit = ttk.Button(tbl_btn_box, text="校正係数 (K) の算出実行", command=self.calculate_regression, style="Action.TButton")
         self.btn_calc_fit.pack(side=tk.RIGHT, padx=5)
         
         # Text Report Frame
-        report_frame = ttk.LabelFrame(left_side, text="CALIBRATION MATHEMATICS & FORMULAS", padding=10)
+        report_frame = ttk.LabelFrame(left_side, text="校正計算レポート ＆ 換算式", padding=10)
         report_frame.pack(fill=tk.BOTH, expand=True, pady=5)
         
         self.txt_report = tk.Text(report_frame, bg="#1E293B", fg="#F8FAFC", font=("Consolas", 9), wrap=tk.WORD, height=10, borderwidth=0)
         self.txt_report.pack(fill=tk.BOTH, expand=True)
-        self.txt_report.insert(tk.END, "Calibration calculations will be rendered here once sweep points are recorded and processed.\n")
+        self.txt_report.insert(tk.END, "測定ポイントを3点以上記録したのち、上記の『校正係数 (K) の算出実行』をクリックしてください。\n")
         
         btn_box = ttk.Frame(report_frame, style="TFrame")
         btn_box.pack(fill=tk.X, pady=4)
         
-        self.btn_export_csv = ttk.Button(btn_box, text="Export CSV Data", command=self.export_csv, style="Action.TButton")
+        self.btn_export_csv = ttk.Button(btn_box, text="CSVデータとして書き出し", command=self.export_csv, style="Action.TButton")
         self.btn_export_csv.pack(side=tk.LEFT, padx=5)
         self.btn_export_csv.state(["disabled"])
         
-        self.btn_save_report = ttk.Button(btn_box, text="Save Calibration Report", command=self.save_report_file, style="Action.TButton")
+        self.btn_save_report = ttk.Button(btn_box, text="校正レポートを保存", command=self.save_report_file, style="Action.TButton")
         self.btn_save_report.pack(side=tk.LEFT, padx=5)
         self.btn_save_report.state(["disabled"])
         
@@ -313,13 +313,13 @@ class PitotCalibrationApp:
         
         self.ax_calib_aoa = self.fig_calib.add_subplot(211)
         self.ax_calib_aoa.set_facecolor("#1E293B")
-        self.ax_calib_aoa.set_title("Pitch vs. AoA Differential Ratio", color="#06B6D4", fontsize=9, fontweight="bold")
+        self.ax_calib_aoa.set_title("ピッチ角 vs. AoA差圧比", color="#06B6D4", fontsize=9, fontweight="bold")
         self.ax_calib_aoa.tick_params(colors="#94A3B8", labelsize=8)
         self.ax_calib_aoa.grid(True, color="#334155", linestyle=":")
         
         self.ax_calib_aos = self.fig_calib.add_subplot(212)
         self.ax_calib_aos.set_facecolor("#1E293B")
-        self.ax_calib_aos.set_title("Yaw vs. AoS Differential Ratio", color="#06B6D4", fontsize=9, fontweight="bold")
+        self.ax_calib_aos.set_title("ヨー角 vs. AoS差圧比", color="#06B6D4", fontsize=9, fontweight="bold")
         self.ax_calib_aos.tick_params(colors="#94A3B8", labelsize=8)
         self.ax_calib_aos.grid(True, color="#334155", linestyle=":")
         
@@ -349,19 +349,19 @@ class PitotCalibrationApp:
         baud = self.baud_var.get()
         
         if not port:
-            messagebox.showerror("Connection Error", "Please select a COM port.")
+            messagebox.showerror("接続エラー", "COMポートを選択してください。")
             return
             
         try:
             self.ser = serial.Serial(port, int(baud), timeout=1)
             self.serial_connected = True
-            self.btn_connect.configure(text="DISCONNECT", style="Stop.TButton")
-            self.lbl_status.configure(text="Status: CONNECTED", foreground="#10B981")
+            self.btn_connect.configure(text="接続を切断する", style="Stop.TButton")
+            self.lbl_status.configure(text="ステータス: 接続完了", foreground="#10B981")
             
             self.read_thread = threading.Thread(target=self.serial_read_loop, daemon=True)
             self.read_thread.start()
         except Exception as e:
-            messagebox.showerror("Connection Error", f"Could not open port {port}:\n{str(e)}")
+            messagebox.showerror("接続エラー", f"ポート {port} を開けませんでした:\n{str(e)}")
 
     def disconnect_serial(self):
         self.serial_connected = False
@@ -372,8 +372,8 @@ class PitotCalibrationApp:
                 pass
             self.ser = None
             
-        self.btn_connect.configure(text="CONNECT", style="Action.TButton")
-        self.lbl_status.configure(text="Status: DISCONNECTED", foreground="#EF4444")
+        self.btn_connect.configure(text="接続する", style="Action.TButton")
+        self.lbl_status.configure(text="ステータス: 切断", foreground="#EF4444")
         self.calibrating_zero = False
         self.recording_point = False
 
@@ -397,7 +397,7 @@ class PitotCalibrationApp:
 
     def on_serial_loss(self):
         self.disconnect_serial()
-        messagebox.showwarning("Connection Lost", "The serial connection was lost.")
+        messagebox.showwarning("接続切断", "マイコンとの接続が切断されました。")
 
     def parse_teleplot_line(self, line):
         try:
@@ -463,13 +463,13 @@ class PitotCalibrationApp:
     # Step A: Aerodynamic Zero Calibration
     def run_zero_calibration(self):
         if not self.serial_connected:
-            messagebox.showwarning("Connection Error", "Please connect to a COM port first.")
+            messagebox.showwarning("接続エラー", "先にCOMポートへ接続してください。")
             return
             
         self.calibrating_zero = True
         self.btn_zero_calib.state(["disabled"])
         self.btn_record_point.state(["disabled"])
-        self.lbl_status.configure(text="Recording Aerodynamic Zero at 0° (5s Avg)...", foreground="#3B82F6")
+        self.lbl_status.configure(text="0°での風中基準オフセットを収集中 (5秒間平均)...", foreground="#3B82F6")
         
         threading.Thread(target=self.collect_zero_samples, daemon=True).start()
 
@@ -492,26 +492,26 @@ class PitotCalibrationApp:
         self.root.after(0, self.on_zero_calibration_complete)
 
     def update_zero_labels(self):
-        self.lbl_aoa_offset.configure(text=f"AoA Offset: {self.aoa_zero_offset:.2f} Pa")
-        self.lbl_aos_offset.configure(text=f"AoS Offset: {self.aos_zero_offset:.2f} Pa")
+        self.lbl_aoa_offset.configure(text=f"AoAオフセット: {self.aoa_zero_offset:.2f} Pa")
+        self.lbl_aos_offset.configure(text=f"AoSオフセット: {self.aos_zero_offset:.2f} Pa")
 
     def on_zero_calibration_complete(self):
         self.calibrating_zero = False
         self.btn_zero_calib.state(["!disabled"])
         self.btn_record_point.state(["!disabled"])
-        self.lbl_status.configure(text="Aerodynamic Zero Calibrated", foreground="#10B981")
-        messagebox.showinfo("Calibration complete", f"Aerodynamic zero values recorded successfully:\nAoA Offset: {self.aoa_zero_offset:.2f} Pa\nAoS Offset: {self.aos_zero_offset:.2f} Pa")
+        self.lbl_status.configure(text="零点校正完了", foreground="#10B981")
+        messagebox.showinfo("零点校正完了", f"風中零点オフセットを登録しました：\nAoAオフセット: {self.aoa_zero_offset:.2f} Pa\nAoSオフセット: {self.aos_zero_offset:.2f} Pa")
 
     # Step B: Record Sweep Point (Filters vibrations by averaging)
     def record_sweep_point(self):
         if not self.serial_connected:
-            messagebox.showwarning("Connection Error", "Please connect to a COM port first.")
+            messagebox.showwarning("接続エラー", "先にCOMポートへ接続してください。")
             return
             
         self.recording_point = True
         self.btn_zero_calib.state(["disabled"])
         self.btn_record_point.state(["disabled"])
-        self.lbl_status.configure(text="Averaging wind tunnel vibration & BNO angles (3s)...", foreground="#3B82F6")
+        self.lbl_status.configure(text="風洞の風速ブレとBNO角度を平均化処理中 (3秒)...", foreground="#3B82F6")
         
         threading.Thread(target=self.collect_sweep_samples, daemon=True).start()
 
@@ -581,7 +581,7 @@ class PitotCalibrationApp:
         self.recording_point = False
         self.btn_zero_calib.state(["!disabled"])
         self.btn_record_point.state(["!disabled"])
-        self.lbl_status.configure(text="Sweep Point Recorded", foreground="#10B981")
+        self.lbl_status.configure(text="計測ポイントを追加しました", foreground="#10B981")
 
     def clear_selected_point(self):
         selected_items = self.tree_points.selection()
@@ -598,7 +598,7 @@ class PitotCalibrationApp:
         self.rebuild_treeview()
 
     def clear_all_points(self):
-        if messagebox.askyesno("Clear all", "Are you sure you want to clear all recorded points?"):
+        if messagebox.askyesno("全データクリア", "記録されたすべての校正用ポイントを削除しますか？"):
             self.sweep_points = []
             for item in self.tree_points.get_children():
                 self.tree_points.delete(item)
@@ -619,7 +619,7 @@ class PitotCalibrationApp:
     # Regression and report generation
     def calculate_regression(self):
         if len(self.sweep_points) < 3:
-            messagebox.showwarning("Data Error", "Please record at least 3 sweep points to run regression.")
+            messagebox.showwarning("データ不足", "回帰計算を行うには最低3点の計測データが必要です。")
             return
             
         # Extract sweep point variables
@@ -672,43 +672,43 @@ class PitotCalibrationApp:
             ss_res = np.sum((y_yaw - y_pred)**2)
             r2_aos = 1.0 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
 
-        # Construct Report
+        # Construct Report in Japanese
         report = []
         report.append("=========================================")
-        report.append("  TEAM ЯTR - WIND TUNNEL CALIBRATION REPORT")
-        report.append("  (Averaged BNO055 IMU Reference Method)")
+        report.append("  TEAM ЯTR - ピトー管風洞キャリブレーション報告書")
+        report.append("  (BNO055実測姿勢角リファレンス平均化方式)")
         report.append("=========================================")
-        report.append(f"Report Created: {time.strftime('%Y-%m-%d %H:%M:%S')}")
-        report.append(f"Total Sweep Points: {len(self.sweep_points)}")
+        report.append(f"レポート生成日時: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        report.append(f"測定ポイント数: {len(self.sweep_points)}")
         report.append("-----------------------------------------")
-        report.append("ENVIRONMENT & ZERO CALIBRATION:")
-        report.append(f"  Baro Pressure:   {self.get_pressure():.2f} hPa")
-        report.append(f"  Reference Temp:  {self.get_temperature():.1f} °C")
-        report.append(f"  Reference Humid: {self.get_humidity():.1f} %")
-        report.append(f"  Aerodynamic AoA Zero Offset: {self.aoa_zero_offset:.2f} Pa")
-        report.append(f"  Aerodynamic AoS Zero Offset: {self.aos_zero_offset:.2f} Pa")
+        report.append("風洞環境および零点オフセット設定:")
+        report.append(f"  設定大気圧:     {self.get_pressure():.2f} hPa")
+        report.append(f"  手動基準温度:   {self.get_temperature():.1f} °C")
+        report.append(f"  手動基準湿度:   {self.get_humidity():.1f} %")
+        report.append(f"  迎角(AoA)風中零点オフセット差圧: {self.aoa_zero_offset:.2f} Pa")
+        report.append(f"  横滑り角(AoS)風中零点オフセット差圧: {self.aos_zero_offset:.2f} Pa")
         report.append("-----------------------------------------")
-        report.append("RECORDED SWEEP POINTS (Filtered Göttingen Fluctuations):")
+        report.append("記録された測定ポイント（風中の脈動・振動を平均化済み）:")
         for i, pt in enumerate(self.sweep_points):
-            report.append(f"  Pt {i+1:2d} | Speed: {pt['avg_speed']:5.2f} m/s | DP_AoA: {pt['avg_aoa_corr']:6.2f} Pa | DP_AoS: {pt['avg_aos_corr']:6.2f} Pa | BNO Pitch: {pt['avg_pitch']:5.2f}° | BNO Yaw: {pt['avg_yaw']:5.2f}°")
+            report.append(f"  点 {i+1:2d} | 対気速度: {pt['avg_speed']:5.2f} m/s | DP_AoA: {pt['avg_aoa_corr']:6.2f} Pa | DP_AoS: {pt['avg_aos_corr']:6.2f} Pa | BNO Pitch: {pt['avg_pitch']:5.2f}° | BNO Yaw: {pt['avg_yaw']:5.2f}°")
         report.append("-----------------------------------------")
-        report.append("CALIBRATION COEFFICIENTS (Angle = K * (DP_corrected / q) + Offset):")
+        report.append("校正数式モデル（ 角度 ＝ K × (補正後差圧 / 動圧q) ＋ オフセット ）:")
         
         if aoa_valid:
-            report.append(f"  Angle of Attack (AoA / Pitch):")
-            report.append(f"    Sensitivity K_AoA (slope):  {k_aoa:.5f} °/(Pa/Pa)")
-            report.append(f"    Offset Angle (intercept):   {offset_aoa:.3f} °")
-            report.append(f"    Fit Quality R²:             {r2_aoa:.4f}")
+            report.append(f"  【迎角 (AoA) 測定特性】")
+            report.append(f"    迎角感度係数 K_AoA (傾き):  {k_aoa:.5f} °/(Pa/Pa)")
+            report.append(f"    アライメントオフセット角:    {offset_aoa:.3f} °")
+            report.append(f"    決定係数 (適合度) R²:        {r2_aoa:.4f}")
         else:
-            report.append("  AoA Calibration: Insufficient speed (q > 5 Pa) in sweep points.")
+            report.append("  AoA 特性: 動圧不足 (q > 5 Paを満たすポイントがありません)")
             
         if aos_valid:
-            report.append(f"  Angle of Sideslip (AoS / Yaw):")
-            report.append(f"    Sensitivity K_AoS (slope):  {k_aos:.5f} °/(Pa/Pa)")
-            report.append(f"    Offset Angle (intercept):   {offset_aos:.3f} °")
-            report.append(f"    Fit Quality R²:             {r2_aos:.4f}")
+            report.append(f"  【横滑り角 (AoS) 測定特性】")
+            report.append(f"    横滑り角感度係数 K_AoS (傾き): {k_aos:.5f} °/(Pa/Pa)")
+            report.append(f"    アライメントオフセット角:      {offset_aos:.3f} °")
+            report.append(f"    決定係数 (適合度) R²:          {r2_aos:.4f}")
         else:
-            report.append("  AoS Calibration: Insufficient speed (q > 5 Pa) in sweep points.")
+            report.append("  AoS 特性: 動圧不足 (q > 5 Paを満たすポイントがありません)")
             
         report.append("=========================================")
         
@@ -725,33 +725,33 @@ class PitotCalibrationApp:
     def draw_calibration_plots(self, x_aoa, y_pitch, k_aoa, offset_aoa, x_aos, y_yaw, k_aos, offset_aos):
         self.ax_calib_aoa.clear()
         self.ax_calib_aoa.set_facecolor("#1E293B")
-        self.ax_calib_aoa.set_title("Pitch vs. AoA Ratio", color="#06B6D4", fontsize=9, fontweight="bold")
+        self.ax_calib_aoa.set_title("ピッチ角 vs. AoA差圧比", color="#06B6D4", fontsize=9, fontweight="bold")
         self.ax_calib_aoa.tick_params(colors="#94A3B8", labelsize=8)
         self.ax_calib_aoa.grid(True, color="#334155", linestyle=":")
         
         if x_aoa:
-            self.ax_calib_aoa.scatter(x_aoa, y_pitch, color="#10B981", s=35, marker="o", label="Averaged points")
+            self.ax_calib_aoa.scatter(x_aoa, y_pitch, color="#10B981", s=35, marker="o", label="測定平均データ")
             x_line = np.linspace(min(x_aoa), max(x_aoa), 100)
             y_line = k_aoa * x_line + offset_aoa
-            self.ax_calib_aoa.plot(x_line, y_line, color="#EF4444", lw=1.5, label=f"Fit (K={k_aoa:.3f})")
+            self.ax_calib_aoa.plot(x_line, y_line, color="#EF4444", lw=1.5, label=f"回帰直線 (K={k_aoa:.3f})")
             self.ax_calib_aoa.legend(facecolor="#1E293B", edgecolor="#334155", labelcolor="#F8FAFC", fontsize=7)
-            self.ax_calib_aoa.set_xlabel("Ratio: DP_AoA_corrected / q", color="#94A3B8", fontsize=7)
-            self.ax_calib_aoa.set_ylabel("Pitch Angle (°)", color="#94A3B8", fontsize=7)
+            self.ax_calib_aoa.set_xlabel("差圧比: 補正後AoA差圧 / 動圧 (q)", color="#94A3B8", fontsize=7)
+            self.ax_calib_aoa.set_ylabel("ピッチ角 BNO Pitch (°)", color="#94A3B8", fontsize=7)
             
         self.ax_calib_aos.clear()
         self.ax_calib_aos.set_facecolor("#1E293B")
-        self.ax_calib_aos.set_title("Yaw vs. AoS Ratio", color="#06B6D4", fontsize=9, fontweight="bold")
+        self.ax_calib_aos.set_title("ヨー角 vs. AoS差圧比", color="#06B6D4", fontsize=9, fontweight="bold")
         self.ax_calib_aos.tick_params(colors="#94A3B8", labelsize=8)
         self.ax_calib_aos.grid(True, color="#334155", linestyle=":")
         
         if x_aos:
-            self.ax_calib_aos.scatter(x_aos, y_yaw, color="#EC4899", s=35, marker="o", label="Averaged points")
+            self.ax_calib_aos.scatter(x_aos, y_yaw, color="#EC4899", s=35, marker="o", label="測定平均データ")
             x_line = np.linspace(min(x_aos), max(x_aos), 100)
             y_line = k_aos * x_line + offset_aos
-            self.ax_calib_aos.plot(x_line, y_line, color="#3B82F6", lw=1.5, label=f"Fit (K={k_aos:.3f})")
+            self.ax_calib_aos.plot(x_line, y_line, color="#3B82F6", lw=1.5, label=f"回帰直線 (K={k_aos:.3f})")
             self.ax_calib_aos.legend(facecolor="#1E293B", edgecolor="#334155", labelcolor="#F8FAFC", fontsize=7)
-            self.ax_calib_aos.set_xlabel("Ratio: DP_AoS_corrected / q", color="#94A3B8", fontsize=7)
-            self.ax_calib_aos.set_ylabel("Yaw Angle (°)", color="#94A3B8", fontsize=7)
+            self.ax_calib_aos.set_xlabel("差圧比: 補正後AoS差圧 / 動圧 (q)", color="#94A3B8", fontsize=7)
+            self.ax_calib_aos.set_ylabel("ヨー角 BNO Yaw (°)", color="#94A3B8", fontsize=7)
             
         self.fig_calib.tight_layout()
         self.canvas_calib.draw()
@@ -762,8 +762,8 @@ class PitotCalibrationApp:
             
         filepath = filedialog.asksaveasfilename(
             defaultextension=".csv",
-            filetypes=[("CSV Files", "*.csv"), ("All Files", "*.*")],
-            title="Export Sweep Calibration Points"
+            filetypes=[("CSVファイル", "*.csv"), ("すべてのファイル", "*.*")],
+            title="測定データをエクスポートする"
         )
         
         if not filepath:
@@ -784,9 +784,9 @@ class PitotCalibrationApp:
                         f"{pt['avg_aoa_corr']:.3f}", f"{pt['avg_aos_corr']:.3f}",
                         f"{pt['avg_pitch']:.3f}", f"{pt['avg_yaw']:.3f}", f"{pt['avg_q']:.3f}"
                     ])
-            messagebox.showinfo("Export Successful", f"Sweep points exported to:\n{filepath}")
+            messagebox.showinfo("保存完了", f"CSVファイルを正常にエクスポートしました：\n{filepath}")
         except Exception as e:
-            messagebox.showerror("Export Error", f"Could not write CSV file:\n{str(e)}")
+            messagebox.showerror("保存エラー", f"CSVファイルを保存できませんでした:\n{str(e)}")
 
     def save_report_file(self):
         if not hasattr(self, 'report_text') or not self.report_text:
@@ -794,8 +794,8 @@ class PitotCalibrationApp:
             
         filepath = filedialog.asksaveasfilename(
             defaultextension=".txt",
-            filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")],
-            title="Save Calibration Report"
+            filetypes=[("テキストファイル", "*.txt"), ("すべてのファイル", "*.*")],
+            title="校正レポートを保存する"
         )
         
         if not filepath:
@@ -804,9 +804,9 @@ class PitotCalibrationApp:
         try:
             with open(filepath, 'w', encoding='utf-8') as f:
                 f.write(self.report_text)
-            messagebox.showinfo("Save Successful", f"Report saved successfully to:\n{filepath}")
+            messagebox.showinfo("保存完了", f"校正レポートを保存しました：\n{filepath}")
         except Exception as e:
-            messagebox.showerror("Save Error", f"Could not write report file:\n{str(e)}")
+            messagebox.showerror("保存エラー", f"レポートファイルを保存できませんでした:\n{str(e)}")
 
     def update_gui_loop(self):
         temp = self.get_temperature()
