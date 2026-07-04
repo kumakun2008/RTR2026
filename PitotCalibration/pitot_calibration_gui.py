@@ -16,6 +16,13 @@ matplotlib.rcParams['axes.unicode_minus'] = False
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 
+def log_debug(msg):
+    try:
+        with open("C:/Users/aoiyu/Documents/PlatformIO/Projects/RTR2026/PitotCalibration/debug.log", "a", encoding="utf-8") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - {msg}\n")
+    except:
+        pass
+
 class PitotCalibrationApp:
     def __init__(self, root):
         self.root = root
@@ -486,6 +493,7 @@ class PitotCalibrationApp:
     def connect_dt_serial(self):
         port = self.dt_port_var.get()
         baud = self.dt_baud_var.get()
+        log_debug(f"Attempting connection: Port={port}, Baud={baud}")
         
         if not port:
             messagebox.showerror("接続エラー", "基準計 DT-8920 のCOMポートを選択してください。")
@@ -503,13 +511,18 @@ class PitotCalibrationApp:
             )
             self.dt_ser.dtr = True
             self.dt_ser.rts = True
+            log_debug("Serial port opened, DTR/RTS set to True. Waiting 1.0s for stabilization...")
+            time.sleep(1.0)
+            
             self.dt_connected = True
             self.btn_dt_connect.configure(text="接続を切断", style="Stop.TButton")
             self.dt_raw_monitor_str = "接続完了 (受信待機中)"
             
+            log_debug("Starting dt8920_read_loop thread...")
             self.dt_read_thread = threading.Thread(target=self.dt8920_read_loop, daemon=True)
             self.dt_read_thread.start()
         except Exception as e:
+            log_debug(f"Connection failed: {str(e)}")
             messagebox.showerror("接続エラー", f"基準計ポート {port} を開けませんでした:\n{str(e)}")
 
     def disconnect_dt_serial(self):
@@ -575,12 +588,15 @@ class PitotCalibrationApp:
 
     # Background thread reader for DT-8920 reference meter
     def dt8920_read_loop(self):
+        log_debug("dt8920_read_loop thread started")
         buffer = b""
         while self.dt_connected:
             try:
                 if self.dt_ser and self.dt_ser.is_open:
-                    if self.dt_ser.in_waiting > 0:
-                        raw = self.dt_ser.read(self.dt_ser.in_waiting)
+                    in_wait = self.dt_ser.in_waiting
+                    if in_wait > 0:
+                        raw = self.dt_ser.read(in_wait)
+                        log_debug(f"Received raw bytes ({len(raw)}): {raw.hex()}")
                         buffer += raw
                         self.dt_last_bytes = raw
                         
@@ -589,7 +605,6 @@ class PitotCalibrationApp:
                             # Find header
                             header_idx = buffer.find(b'\xAA\xBB')
                             if header_idx == -1:
-                                # No header found, clear buffer except possibly the last byte if it's \xAA
                                 if len(buffer) > 0 and buffer[-1] == 0xAA:
                                     buffer = b'\xAA'
                                 else:
@@ -625,13 +640,17 @@ class PitotCalibrationApp:
                                     
                                 # Display in Raw Monitor
                                 self.dt_raw_monitor_str = f"風速:{velocity:.2f}m/s 差圧:{pressure_pa:.1f}Pa 気温:{temp:.1f}°C"
+                                log_debug(f"Parsed: V={velocity:.2f}, P={pressure_pa:.1f}, T={temp:.1f}")
                             except Exception as parse_ex:
+                                log_debug(f"Packet parse failed: {str(parse_ex)}")
                                 self.dt_raw_monitor_str = "パケット解析エラー"
             except Exception as e:
+                log_debug(f"Exception in dt8920_read_loop: {str(e)}")
                 self.dt_connected = False
                 self.root.after(0, self.on_dt_serial_loss)
                 break
             time.sleep(0.01)
+        log_debug("dt8920_read_loop thread ended")
 
     def update_dt_value(self, val):
         if self.dt_mode_var.get() == "speed":
