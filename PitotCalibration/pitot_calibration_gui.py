@@ -4,6 +4,7 @@ import time
 import serial
 import serial.tools.list_ports
 import threading
+import re
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import numpy as np
@@ -15,16 +16,21 @@ from matplotlib.figure import Figure
 class PitotCalibrationApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Team ЯTR - ピトー管 風洞校正支援システム (自動アライメント対応)")
-        self.root.geometry("1300x850")
+        self.root.title("Team ЯTR - ピトー管 風洞校正支援システム (DT-8920 リアルタイム比較対応)")
+        self.root.geometry("1350x885")
         self.root.configure(bg="#0F172A") # slate-900
 
-        # Serial configuration
+        # Serial configuration (Pitot tube board)
         self.ser = None
         self.serial_connected = False
         self.read_thread = None
         
-        # Real-time data storage
+        # Serial configuration (DT-8920 reference meter)
+        self.dt_ser = None
+        self.dt_connected = False
+        self.dt_read_thread = None
+        
+        # Real-time data storage (Pitot tube board)
         self.current_data = {
             "airspeed": 0.0,
             "aoa_pa": 0.0,
@@ -35,6 +41,14 @@ class PitotCalibrationApp:
             "temp": 0.0,
             "humid": 0.0
         }
+        
+        # Real-time data storage (DT-8920 reference meter)
+        self.dt_data = {
+            "airspeed": 0.0,
+            "pressure": 0.0
+        }
+        self.dt_raw_monitor_str = "未接続"
+        self.dt_last_bytes = b""
         
         # Zero-point aerodynamic offsets (calibrated at 0 degrees under wind)
         self.aoa_zero_offset = 0.0
@@ -51,6 +65,10 @@ class PitotCalibrationApp:
         self.history_aos = []
         self.history_pitch = []
         self.history_yaw = []
+        # DT-8920 history
+        self.history_dt_speed = []
+        self.history_dt_press = []
+        
         self.start_app_time = time.time()
         
         # Status
@@ -78,7 +96,7 @@ class PitotCalibrationApp:
         style.configure("CardLabel.TLabel", background="#1E293B", foreground="#F8FAFC", font=("Segoe UI", 10, "bold"))
         
         # Buttons
-        style.configure("Action.TButton", font=("Segoe UI", 10, "bold"), foreground="#FFFFFF", background="#3B82F6")
+        style.configure("Action.TButton", font=("Segoe UI", 9, "bold"), foreground="#FFFFFF", background="#3B82F6")
         style.map("Action.TButton", background=[("active", "#2563EB")])
         
         style.configure("Start.TButton", font=("Segoe UI", 10, "bold"), foreground="#FFFFFF", background="#10B981")
@@ -105,28 +123,75 @@ class PitotCalibrationApp:
         left_container = ttk.Frame(main_pane, style="TFrame")
         main_pane.add(left_container, weight=1)
         
-        # Serial Connection Card
-        conn_frame = ttk.LabelFrame(left_container, text="1. シリアル接続設定", padding=10)
+        # 1. Dual Serial Connection Card
+        conn_frame = ttk.LabelFrame(left_container, text="1. 機器接続設定", padding=10)
         conn_frame.pack(fill=tk.X, pady=4, padx=5)
         
-        ttk.Label(conn_frame, text="COMポート:").grid(row=0, column=0, sticky=tk.W, pady=2)
+        # Sub-grid for Dual Serial
+        conn_grid = ttk.Frame(conn_frame)
+        conn_grid.pack(fill=tk.X)
+        
+        # Column 0: Pitot Board
+        pitot_conn_frame = ttk.LabelFrame(conn_grid, text="ピトー管基板", padding=5)
+        pitot_conn_frame.grid(row=0, column=0, padx=4, sticky=tk.NSEW)
+        
+        ttk.Label(pitot_conn_frame, text="COMポート:").pack(anchor=tk.W)
         self.port_var = tk.StringVar()
-        self.port_combo = ttk.Combobox(conn_frame, textvariable=self.port_var, values=self.get_serial_ports(), width=15)
-        self.port_combo.grid(row=0, column=1, pady=2, padx=5)
+        self.port_combo = ttk.Combobox(pitot_conn_frame, textvariable=self.port_var, values=self.get_serial_ports(), width=10)
+        self.port_combo.pack(fill=tk.X, pady=2)
         
-        btn_refresh = ttk.Button(conn_frame, text="再検出", command=self.refresh_ports, width=8)
-        btn_refresh.grid(row=0, column=2, pady=2, padx=2)
-        
-        ttk.Label(conn_frame, text="ボーレート:").grid(row=1, column=0, sticky=tk.W, pady=2)
+        ttk.Label(pitot_conn_frame, text="ボーレート:").pack(anchor=tk.W)
         self.baud_var = tk.StringVar(value="115200")
-        self.baud_combo = ttk.Combobox(conn_frame, textvariable=self.baud_var, values=["9600", "38400", "57600", "115200"], width=15)
-        self.baud_combo.grid(row=1, column=1, pady=2, padx=5, columnspan=2, sticky=tk.W)
+        self.baud_combo = ttk.Combobox(pitot_conn_frame, textvariable=self.baud_var, values=["9600", "38400", "57600", "115200"], width=10)
+        self.baud_combo.pack(fill=tk.X, pady=2)
         
-        self.btn_connect = ttk.Button(conn_frame, text="接続する", command=self.toggle_connection, style="Action.TButton")
-        self.btn_connect.grid(row=2, column=0, columnspan=3, pady=6, sticky=tk.EW)
+        self.btn_connect = ttk.Button(pitot_conn_frame, text="接続する", command=self.toggle_connection, style="Action.TButton")
+        self.btn_connect.pack(fill=tk.X, pady=4)
         
-        # Environment settings
-        env_frame = ttk.LabelFrame(left_container, text="2. 風洞環境パラメータ (空気密度用)", padding=10)
+        # Column 1: DT-8920 Reference Meter
+        dt_conn_frame = ttk.LabelFrame(conn_grid, text="基準計 (DT-8920)", padding=5)
+        dt_conn_frame.grid(row=0, column=1, padx=4, sticky=tk.NSEW)
+        
+        ttk.Label(dt_conn_frame, text="COMポート:").pack(anchor=tk.W)
+        self.dt_port_var = tk.StringVar()
+        self.dt_port_combo = ttk.Combobox(dt_conn_frame, textvariable=self.dt_port_var, values=self.get_serial_ports(), width=10)
+        self.dt_port_combo.pack(fill=tk.X, pady=2)
+        
+        ttk.Label(dt_conn_frame, text="ボーレート:").pack(anchor=tk.W)
+        self.dt_baud_var = tk.StringVar(value="9600")
+        self.dt_baud_combo = ttk.Combobox(dt_conn_frame, textvariable=self.dt_baud_var, values=["2400", "9600", "19200", "115200"], width=10)
+        self.dt_baud_combo.pack(fill=tk.X, pady=2)
+        
+        self.btn_dt_connect = ttk.Button(dt_conn_frame, text="接続する", command=self.toggle_dt_connection, style="Action.TButton")
+        self.btn_dt_connect.pack(fill=tk.X, pady=4)
+        
+        # Global COM Port Refresh
+        btn_refresh = ttk.Button(conn_frame, text="ポート再検出", command=self.refresh_ports, style="Action.TButton")
+        btn_refresh.pack(fill=tk.X, pady=4)
+        
+        # 2. DT-8920 Parsing Parameter Settings Card
+        dt_param_frame = ttk.LabelFrame(left_container, text="2. 基準計 (DT-8920) 設定＆モニター", padding=10)
+        dt_param_frame.pack(fill=tk.X, pady=4, padx=5)
+        
+        ttk.Label(dt_param_frame, text="測定値の対象:").grid(row=0, column=0, sticky=tk.W, pady=2)
+        self.dt_mode_var = tk.StringVar(value="speed")
+        r_dt_speed = ttk.Radiobutton(dt_param_frame, text="対気速度 (m/s)", variable=self.dt_mode_var, value="speed")
+        r_dt_speed.grid(row=0, column=1, sticky=tk.W, padx=5)
+        r_dt_press = ttk.Radiobutton(dt_param_frame, text="差圧 (Pa)", variable=self.dt_mode_var, value="pressure")
+        r_dt_press.grid(row=0, column=2, sticky=tk.W, padx=5)
+        
+        ttk.Label(dt_param_frame, text="解析デコーダ:").grid(row=1, column=0, sticky=tk.W, pady=2)
+        self.dt_decoder_var = tk.StringVar(value="ascii")
+        self.dt_decoder_combo = ttk.Combobox(dt_param_frame, textvariable=self.dt_decoder_var, values=["ascii", "cem_be", "cem_le"], width=12)
+        self.dt_decoder_combo.grid(row=1, column=1, columnspan=2, sticky=tk.W, padx=5)
+        self.dt_decoder_combo.bind("<<ComboboxSelected>>", self.on_dt_decoder_change)
+        
+        ttk.Label(dt_param_frame, text="生受信バイト:").grid(row=2, column=0, sticky=tk.W, pady=2)
+        self.lbl_dt_monitor = ttk.Label(dt_param_frame, text="-- -- -- -- -- -- -- --", font=("Consolas", 9), foreground="#E2E8F0")
+        self.lbl_dt_monitor.grid(row=2, column=1, columnspan=2, sticky=tk.W, padx=5)
+        
+        # 3. Environment settings
+        env_frame = ttk.LabelFrame(left_container, text="3. 風洞環境パラメータ (空気密度用)", padding=10)
         env_frame.pack(fill=tk.X, pady=4, padx=5)
         
         ttk.Label(env_frame, text="現地大気圧 (hPa):").grid(row=0, column=0, sticky=tk.W, pady=2)
@@ -134,7 +199,7 @@ class PitotCalibrationApp:
         self.press_entry.insert(0, "1013.25")
         self.press_entry.grid(row=0, column=1, pady=2, padx=5, sticky=tk.W)
         
-        # Temp & Humid overrides (Crucial due to board heating)
+        # Temp & Humid overrides
         self.temp_override_var = tk.BooleanVar(value=True)
         self.chk_temp_override = ttk.Checkbutton(env_frame, text="温度を手動入力 (°C)", variable=self.temp_override_var)
         self.chk_temp_override.grid(row=1, column=0, sticky=tk.W, pady=2)
@@ -149,8 +214,8 @@ class PitotCalibrationApp:
         self.humid_entry.insert(0, "50.0")
         self.humid_entry.grid(row=2, column=1, pady=2, padx=5, sticky=tk.W)
 
-        # Wind Tunnel Calibration Run Card
-        calib_frame = ttk.LabelFrame(left_container, text="3. 風洞キャリブレーション実行", padding=10)
+        # 4. Wind Tunnel Calibration Run Card
+        calib_frame = ttk.LabelFrame(left_container, text="4. 風洞キャリブレーション実行", padding=10)
         calib_frame.pack(fill=tk.X, pady=4, padx=5)
         
         # STEP A: Aerodynamic Zero Calibration
@@ -176,24 +241,27 @@ class PitotCalibrationApp:
         self.lbl_status = ttk.Label(calib_frame, text="ステータス: 待機中", font=("Segoe UI", 10, "bold"), foreground="#94A3B8")
         self.lbl_status.pack(pady=4)
         
-        # Real-time Value Readouts Card
-        readout_frame = ttk.LabelFrame(left_container, text="4. リアルタイム数値表示", padding=10)
+        # 5. Real-time Value Readouts Card (Pitot & DT-8920 side-by-side comparison)
+        readout_frame = ttk.LabelFrame(left_container, text="5. リアルタイム比較・数値表示", padding=10)
         readout_frame.pack(fill=tk.BOTH, expand=True, pady=4, padx=5)
         
         self.readout_labels = {}
         vars_to_show = [
-            ("対気速度", "airspeed", " m/s", "#3B82F6"),
-            ("AoA 差圧センサー P1 (生値)", "aoa_pa", " Pa", "#10B981"),
-            ("AoS 差圧センサー P2 (生値)", "aos_pa", " Pa", "#EC4899"),
+            ("ピトー管 対気速度", "airspeed", " m/s", "#3B82F6"),
+            ("基準計 (DT-8920) 速度", "dt_speed", " m/s", "#06B6D4"),
+            ("速度測定誤差 (ピトー - 基準)", "speed_error", " m/s", "#F8FAFC"),
+            ("ピトー管 AoA差圧 (生値)", "aoa_pa", " Pa", "#10B981"),
+            ("ピトー管 AoS差圧 (生値)", "aos_pa", " Pa", "#EC4899"),
+            ("基準計 (DT-8920) 差圧", "dt_press", " Pa", "#06B6D4"),
+            ("差圧測定誤差 (ピトー - 基準)", "press_error", " Pa", "#F8FAFC"),
             ("BNO055 ピッチ角 (AoA基準)", "pitch", "°", "#F59E0B"),
             ("BNO055 ヨー角 (AoS基準)", "yaw", "°", "#F59E0B"),
-            ("算出空気密度 (ρ)", "density", " kg/m³", "#06B6D4")
         ]
         
         for idx, (label, key, unit, color) in enumerate(vars_to_show):
-            ttk.Label(readout_frame, text=label+":", font=("Segoe UI", 9)).grid(row=idx, column=0, sticky=tk.W, pady=2)
+            ttk.Label(readout_frame, text=label+":", font=("Segoe UI", 9)).grid(row=idx, column=0, sticky=tk.W, pady=1)
             lbl_val = ttk.Label(readout_frame, text="0.00"+unit, font=("Segoe UI", 10, "bold"), foreground=color)
-            lbl_val.grid(row=idx, column=1, sticky=tk.E, pady=2, padx=15)
+            lbl_val.grid(row=idx, column=1, sticky=tk.E, pady=1, padx=15)
             self.readout_labels[key] = (lbl_val, unit)
             
         # Right Panel
@@ -205,7 +273,7 @@ class PitotCalibrationApp:
         
         # Tab 1: Real-time Trends
         tab_trends = ttk.Frame(self.notebook, style="TFrame")
-        self.notebook.add(tab_trends, text="リアルタイムグラフ推移")
+        self.notebook.add(tab_trends, text="対比リアルタイムグラフ")
         self.setup_trends_plot(tab_trends)
         
         # Tab 2: Calibration Sweep & Regression
@@ -216,22 +284,25 @@ class PitotCalibrationApp:
     def setup_trends_plot(self, parent):
         self.fig_trends = Figure(figsize=(8, 6), dpi=100, facecolor="#0F172A")
         
-        # Subplot 1: Speed and Pressures
+        # Subplot 1: Speed and Pressures comparison
         self.ax_press = self.fig_trends.add_subplot(211)
         self.ax_press.set_facecolor("#1E293B")
-        self.ax_press.set_title("センサーデータ推移", color="#06B6D4", fontsize=10, fontweight="bold")
+        self.ax_press.set_title("対気速度・差圧のリアルタイム対比 (実線: ピトー / 点線: DT-8920)", color="#06B6D4", fontsize=10, fontweight="bold")
         self.ax_press.tick_params(colors="#94A3B8", labelsize=8)
         self.ax_press.grid(True, color="#334155", linestyle=":")
         
-        self.line_speed, = self.ax_press.plot([], [], label="対気速度 (m/s)", color="#3B82F6", lw=2)
-        self.line_aoa_p, = self.ax_press.plot([], [], label="AoA 差圧 DP1 (Pa)", color="#10B981", lw=1.5)
-        self.line_aos_p, = self.ax_press.plot([], [], label="AoS 差圧 DP2 (Pa)", color="#EC4899", lw=1.5)
+        self.line_speed, = self.ax_press.plot([], [], label="ピトー管速度 (m/s)", color="#3B82F6", lw=2)
+        self.line_dt_speed, = self.ax_press.plot([], [], label="基準計DT-8920速度 (m/s)", color="#06B6D4", lw=1.5, linestyle="--")
+        
+        self.line_aoa_p, = self.ax_press.plot([], [], label="ピトー管AoA差圧 (Pa)", color="#10B981", lw=1)
+        self.line_dt_press, = self.ax_press.plot([], [], label="基準計DT-8920差圧 (Pa)", color="#EC4899", lw=1, linestyle=":")
+        
         self.ax_press.legend(facecolor="#1E293B", edgecolor="#334155", labelcolor="#F8FAFC", fontsize=8)
         
         # Subplot 2: IMU
         self.ax_att = self.fig_trends.add_subplot(212)
         self.ax_att.set_facecolor("#1E293B")
-        self.ax_att.set_title("BNO055 角度推移", color="#06B6D4", fontsize=10, fontweight="bold")
+        self.ax_att.set_title("BNO055 姿勢角度推移", color="#06B6D4", fontsize=10, fontweight="bold")
         self.ax_att.tick_params(colors="#94A3B8", labelsize=8)
         self.ax_att.grid(True, color="#334155", linestyle=":")
         
@@ -254,25 +325,32 @@ class PitotCalibrationApp:
         left_side.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5)
         
         # Treeview (points grid)
-        table_frame = ttk.LabelFrame(left_side, text="記録された測定ポイント一覧 (3秒時間平均化処理済み)", padding=5)
+        table_frame = ttk.LabelFrame(left_side, text="記録された測定ポイント一覧 (3秒時間平均化)", padding=5)
         table_frame.pack(fill=tk.BOTH, expand=True, pady=5)
         
-        columns = ("id", "speed", "aoa_p", "aos_p", "pitch", "yaw")
+        # Calibration reference option
+        self.use_ref_speed_var = tk.BooleanVar(value=True)
+        chk_use_ref = ttk.Checkbutton(table_frame, text="校正時の動圧(q)基準として DT-8920 の対気速度を使用する (推奨)", variable=self.use_ref_speed_var)
+        chk_use_ref.pack(anchor=tk.W, pady=2)
+        
+        columns = ("id", "speed", "dt_speed", "aoa_p", "aos_p", "pitch", "yaw")
         self.tree_points = ttk.Treeview(table_frame, columns=columns, show="headings", height=8)
         
         self.tree_points.heading("id", text="ID")
-        self.tree_points.heading("speed", text="対気速度 (m/s)")
+        self.tree_points.heading("speed", text="ピトー速度 (m/s)")
+        self.tree_points.heading("dt_speed", text="基準速度 (m/s)")
         self.tree_points.heading("aoa_p", text="補正後 AoA差圧 (Pa)")
         self.tree_points.heading("aos_p", text="補正後 AoS差圧 (Pa)")
-        self.tree_points.heading("pitch", text="BNOピッチ角 (迎角) (°)")
-        self.tree_points.heading("yaw", text="BNOヨー角 (横滑り角) (°)")
+        self.tree_points.heading("pitch", text="BNOピッチ角 (°)")
+        self.tree_points.heading("yaw", text="BNOヨー角 (°)")
         
-        self.tree_points.column("id", width=40, anchor=tk.CENTER)
-        self.tree_points.column("speed", width=100, anchor=tk.CENTER)
-        self.tree_points.column("aoa_p", width=110, anchor=tk.CENTER)
-        self.tree_points.column("aos_p", width=110, anchor=tk.CENTER)
-        self.tree_points.column("pitch", width=110, anchor=tk.CENTER)
-        self.tree_points.column("yaw", width=110, anchor=tk.CENTER)
+        self.tree_points.column("id", width=35, anchor=tk.CENTER)
+        self.tree_points.column("speed", width=95, anchor=tk.CENTER)
+        self.tree_points.column("dt_speed", width=95, anchor=tk.CENTER)
+        self.tree_points.column("aoa_p", width=105, anchor=tk.CENTER)
+        self.tree_points.column("aos_p", width=105, anchor=tk.CENTER)
+        self.tree_points.column("pitch", width=95, anchor=tk.CENTER)
+        self.tree_points.column("yaw", width=95, anchor=tk.CENTER)
         
         self.tree_points.pack(fill=tk.BOTH, expand=True)
         
@@ -335,8 +413,15 @@ class PitotCalibrationApp:
     def refresh_ports(self):
         ports = self.get_serial_ports()
         self.port_combo["values"] = ports
+        self.dt_port_combo["values"] = ports
         if ports:
-            self.port_combo.current(0)
+            # Set default values if not already selected
+            if not self.port_var.get():
+                self.port_combo.current(0)
+            if len(ports) > 1 and not self.dt_port_var.get():
+                self.dt_port_combo.current(1)
+            elif not self.dt_port_var.get():
+                self.dt_port_combo.current(0)
 
     def toggle_connection(self):
         if self.serial_connected:
@@ -349,19 +434,19 @@ class PitotCalibrationApp:
         baud = self.baud_var.get()
         
         if not port:
-            messagebox.showerror("接続エラー", "COMポートを選択してください。")
+            messagebox.showerror("接続エラー", "ピトー管基板のCOMポートを選択してください。")
             return
             
         try:
             self.ser = serial.Serial(port, int(baud), timeout=1)
             self.serial_connected = True
-            self.btn_connect.configure(text="接続を切断する", style="Stop.TButton")
-            self.lbl_status.configure(text="ステータス: 接続完了", foreground="#10B981")
+            self.btn_connect.configure(text="接続を切断", style="Stop.TButton")
+            self.lbl_status.configure(text="ピトー管: 接続完了", foreground="#10B981")
             
             self.read_thread = threading.Thread(target=self.serial_read_loop, daemon=True)
             self.read_thread.start()
         except Exception as e:
-            messagebox.showerror("接続エラー", f"ポート {port} を開けませんでした:\n{str(e)}")
+            messagebox.showerror("接続エラー", f"ピトー管ポート {port} を開けませんでした:\n{str(e)}")
 
     def disconnect_serial(self):
         self.serial_connected = False
@@ -373,9 +458,55 @@ class PitotCalibrationApp:
             self.ser = None
             
         self.btn_connect.configure(text="接続する", style="Action.TButton")
-        self.lbl_status.configure(text="ステータス: 切断", foreground="#EF4444")
+        self.lbl_status.configure(text="ピトー管: 切断", foreground="#EF4444")
         self.calibrating_zero = False
         self.recording_point = False
+
+    def toggle_dt_connection(self):
+        if self.dt_connected:
+            self.disconnect_dt_serial()
+        else:
+            self.connect_dt_serial()
+
+    def connect_dt_serial(self):
+        port = self.dt_port_var.get()
+        baud = self.dt_baud_var.get()
+        
+        if not port:
+            messagebox.showerror("接続エラー", "基準計 DT-8920 のCOMポートを選択してください。")
+            return
+            
+        try:
+            # 8N1 configuration is standard
+            self.dt_ser = serial.Serial(
+                port=port,
+                baudrate=int(baud),
+                bytesize=serial.EIGHTBITS,
+                parity=serial.PARITY_NONE,
+                stopbits=serial.STOPBITS_ONE,
+                timeout=0.5
+            )
+            self.dt_connected = True
+            self.btn_dt_connect.configure(text="接続を切断", style="Stop.TButton")
+            self.dt_raw_monitor_str = "接続完了 (受信待機中)"
+            
+            self.dt_read_thread = threading.Thread(target=self.dt8920_read_loop, daemon=True)
+            self.dt_read_thread.start()
+        except Exception as e:
+            messagebox.showerror("接続エラー", f"基準計ポート {port} を開けませんでした:\n{str(e)}")
+
+    def disconnect_dt_serial(self):
+        self.dt_connected = False
+        if self.dt_ser:
+            try:
+                self.dt_ser.close()
+            except:
+                pass
+            self.dt_ser = None
+            
+        self.btn_dt_connect.configure(text="接続する", style="Action.TButton")
+        self.dt_raw_monitor_str = "未接続"
+        self.dt_data = {"airspeed": 0.0, "pressure": 0.0}
 
     def serial_read_loop(self):
         buffer = ""
@@ -397,7 +528,7 @@ class PitotCalibrationApp:
 
     def on_serial_loss(self):
         self.disconnect_serial()
-        messagebox.showwarning("接続切断", "マイコンとの接続が切断されました。")
+        messagebox.showwarning("接続切断", "ピトー管基板とのシリアル通信が切断されました。")
 
     def parse_teleplot_line(self, line):
         try:
@@ -424,6 +555,120 @@ class PitotCalibrationApp:
                     self.current_data["humid"] = val
         except:
             pass
+
+    # Background thread reader for DT-8920 reference meter
+    def dt8920_read_loop(self):
+        buffer = b""
+        while self.dt_connected:
+            try:
+                if self.dt_ser and self.dt_ser.in_waiting > 0:
+                    raw_bytes = self.dt_ser.read(self.dt_ser.in_waiting)
+                    self.dt_last_bytes = raw_bytes
+                    buffer += raw_bytes
+                    
+                    # Update Raw Hex Monitor text (last 8 bytes)
+                    hex_str = " ".join([f"{b:02X}" for b in buffer[-8:]])
+                    self.dt_raw_monitor_str = hex_str
+                    
+                    # 1. Check ASCII format (Line terminated by \n or \r)
+                    while b'\n' in buffer or b'\r' in buffer:
+                        idx_n = buffer.find(b'\n')
+                        idx_r = buffer.find(b'\r')
+                        if idx_n != -1 and idx_r != -1:
+                            split_idx = min(idx_n, idx_r)
+                        else:
+                            split_idx = idx_n if idx_n != -1 else idx_r
+                            
+                        line_bytes = buffer[:split_idx]
+                        buffer = buffer[split_idx+1:]
+                        
+                        if len(line_bytes) == 0:
+                            continue
+                            
+                        try:
+                            line_str = line_bytes.decode('utf-8', errors='ignore').strip()
+                            
+                            # Parse float using regex
+                            match = re.search(r'[-+]?\d*\.\d+|\d+', line_str)
+                            if match and self.dt_decoder_var.get() == "ascii":
+                                val = float(match.group())
+                                self.update_dt_value(val)
+                        except:
+                            pass
+                            
+                    # 2. Check Binary formats (Standard 14-byte frames for CEM meters)
+                    # CEM meters send 14-byte blocks. If buffer gets large, parse packets.
+                    if len(buffer) >= 14:
+                        # Scan buffer for packet candidates
+                        # Standard CEM headers: 0xAA or 0x55 or 0x02 or 0x03
+                        packet_parsed = False
+                        for i in range(len(buffer) - 13):
+                            packet = buffer[i:i+14]
+                            
+                            # CEM Binary Decoders
+                            if self.dt_decoder_var.get() in ["cem_be", "cem_le"]:
+                                # CEM standard format stores 16-bit value in byte index 3 and 4
+                                # (Or index 2 and 3 depending on firmware)
+                                if self.dt_decoder_var.get() == "cem_be":
+                                    val_raw = (packet[3] << 8) | packet[4]
+                                else:
+                                    val_raw = (packet[4] << 8) | packet[3]
+                                    
+                                # If it's a signed 16-bit integer
+                                if val_raw & 0x8000:
+                                    val_raw -= 65536
+                                    
+                                # Often divided by 100 for decimals
+                                val = val_raw / 100.0
+                                self.update_dt_value(val)
+                                packet_parsed = True
+                                
+                        if packet_parsed:
+                            buffer = buffer[-13:] # keep rest
+                            
+                    # Prevent buffer overflow if parsing fails
+                    if len(buffer) > 100:
+                        # Try fallback ASCII float search anywhere in the raw buffer
+                        try:
+                            buffer_str = buffer.decode('utf-8', errors='ignore')
+                            matches = re.findall(r'[-+]?\d*\.\d+|\d+', buffer_str)
+                            if matches and self.dt_decoder_var.get() == "ascii":
+                                val = float(matches[-1])
+                                self.update_dt_value(val)
+                        except:
+                            pass
+                        buffer = b"" # flush
+                        
+            except Exception as e:
+                self.dt_connected = False
+                self.root.after(0, self.on_dt_serial_loss)
+                break
+            time.sleep(0.01)
+
+    def update_dt_value(self, val):
+        if self.dt_mode_var.get() == "speed":
+            self.dt_data["airspeed"] = val
+            # If in speed mode, set pressure to 0
+            self.dt_data["pressure"] = 0.0
+        else:
+            self.dt_data["pressure"] = val
+            # Calculate corresponding airspeed from reference pressure (dynamic pressure q)
+            temp = self.get_temperature()
+            humid = self.get_humidity()
+            p_hpa = self.get_pressure()
+            rho = self.calculate_density(temp, humid, p_hpa)
+            if val > 0:
+                self.dt_data["airspeed"] = np.sqrt(2 * val / rho)
+            else:
+                self.dt_data["airspeed"] = 0.0
+
+    def on_dt_decoder_change(self, event):
+        # Reset buffer on decoder change
+        pass
+
+    def on_dt_serial_loss(self):
+        self.disconnect_dt_serial()
+        messagebox.showwarning("接続切断", "基準計 DT-8920 とのシリアル通信が切断されました。")
 
     def get_temperature(self):
         if self.temp_override_var.get():
@@ -463,7 +708,7 @@ class PitotCalibrationApp:
     # Step A: Aerodynamic Zero Calibration
     def run_zero_calibration(self):
         if not self.serial_connected:
-            messagebox.showwarning("接続エラー", "先にCOMポートへ接続してください。")
+            messagebox.showwarning("接続エラー", "先にピトー管基板へ接続してください。")
             return
             
         self.calibrating_zero = True
@@ -505,13 +750,13 @@ class PitotCalibrationApp:
     # Step B: Record Sweep Point (Filters vibrations by averaging)
     def record_sweep_point(self):
         if not self.serial_connected:
-            messagebox.showwarning("接続エラー", "先にCOMポートへ接続してください。")
+            messagebox.showwarning("接続エラー", "先にピトー管基板へ接続してください。")
             return
             
         self.recording_point = True
         self.btn_zero_calib.state(["disabled"])
         self.btn_record_point.state(["disabled"])
-        self.lbl_status.configure(text="風洞の風速ブレとBNO角度を平均化処理中 (3秒)...", foreground="#3B82F6")
+        self.lbl_status.configure(text="風洞の揺らぎとBNO角度、基準計を平均化処理中 (3秒)...", foreground="#3B82F6")
         
         threading.Thread(target=self.collect_sweep_samples, daemon=True).start()
 
@@ -521,43 +766,36 @@ class PitotCalibrationApp:
         
         while time.time() - start_time < 3.0:
             if self.serial_connected:
-                temp = self.get_temperature()
-                humid = self.get_humidity()
-                p_hpa = self.get_pressure()
-                rho = self.calculate_density(temp, humid, p_hpa)
-                
                 # Correct raw pressure values with aerodynamic 0° offset
                 aoa_corr = self.current_data["aoa_pa"] - self.aoa_zero_offset
                 aos_corr = self.current_data["aos_pa"] - self.aos_zero_offset
                 
-                q = 0.5 * rho * (self.current_data["airspeed"] ** 2)
-                
                 samples.append({
                     "speed": self.current_data["airspeed"],
+                    "dt_speed": self.dt_data["airspeed"],
                     "aoa_corr": aoa_corr,
                     "aos_corr": aos_corr,
                     "pitch": self.current_data["pitch"],
-                    "yaw": self.current_data["yaw"],
-                    "q": q
+                    "yaw": self.current_data["yaw"]
                 })
             time.sleep(0.1) # 10Hz
             
         if samples and self.serial_connected:
-            # Average variables over the 3-second block to cancel Göttingen tunnel vibrations & trust BNO055!
+            # Average variables over the 3-second block to cancel vibrations
             avg_speed = np.mean([s["speed"] for s in samples])
+            avg_dt_speed = np.mean([s["dt_speed"] for s in samples])
             avg_aoa_corr = np.mean([s["aoa_corr"] for s in samples])
             avg_aos_corr = np.mean([s["aos_corr"] for s in samples])
             avg_pitch = np.mean([s["pitch"] for s in samples])
             avg_yaw = np.mean([s["yaw"] for s in samples])
-            avg_q = np.mean([s["q"] for s in samples])
             
             point = {
                 "avg_speed": avg_speed,
+                "avg_dt_speed": avg_dt_speed,
                 "avg_aoa_corr": avg_aoa_corr,
                 "avg_aos_corr": avg_aos_corr,
                 "avg_pitch": avg_pitch,
-                "avg_yaw": avg_yaw,
-                "avg_q": avg_q
+                "avg_yaw": avg_yaw
             }
             self.sweep_points.append(point)
             
@@ -571,6 +809,7 @@ class PitotCalibrationApp:
         self.tree_points.insert("", "end", values=(
             idx,
             f"{pt['avg_speed']:.2f}",
+            f"{pt['avg_dt_speed']:.2f}",
             f"{pt['avg_aoa_corr']:.2f}",
             f"{pt['avg_aos_corr']:.2f}",
             f"{pt['avg_pitch']:.2f}°",
@@ -610,6 +849,7 @@ class PitotCalibrationApp:
             self.tree_points.insert("", "end", values=(
                 idx + 1,
                 f"{pt['avg_speed']:.2f}",
+                f"{pt['avg_dt_speed']:.2f}",
                 f"{pt['avg_aoa_corr']:.2f}",
                 f"{pt['avg_aos_corr']:.2f}",
                 f"{pt['avg_pitch']:.2f}°",
@@ -622,14 +862,28 @@ class PitotCalibrationApp:
             messagebox.showwarning("データ不足", "回帰計算を行うには最低3点の計測データが必要です。")
             return
             
-        # Extract sweep point variables
-        speeds = [p["avg_speed"] for p in self.sweep_points]
-        aoas = [p["avg_aoa_corr"] for p in self.sweep_points]
-        aoss = [p["avg_aos_corr"] for p in self.sweep_points]
+        # Extract environment
+        temp = self.get_temperature()
+        humid = self.get_humidity()
+        p_hpa = self.get_pressure()
+        rho = self.calculate_density(temp, humid, p_hpa)
+        
+        # Extract variables
         pitches = [p["avg_pitch"] for p in self.sweep_points]
         yaws = [p["avg_yaw"] for p in self.sweep_points]
-        qs = [p["avg_q"] for p in self.sweep_points]
+        aoas = [p["avg_aoa_corr"] for p in self.sweep_points]
+        aoss = [p["avg_aos_corr"] for p in self.sweep_points]
         
+        # Decide reference speed source
+        use_dt = self.use_ref_speed_var.get() and self.dt_connected
+        
+        # Calculate dynamic pressure q for each sweep point
+        qs = []
+        for p in self.sweep_points:
+            ref_speed = p["avg_dt_speed"] if use_dt else p["avg_speed"]
+            q = 0.5 * rho * (ref_speed ** 2)
+            qs.append(q)
+            
         # Prepare regression arrays: Ratio (DP_corrected / q) vs Real Angle from BNO055
         x_aoa = []
         y_pitch = []
@@ -676,21 +930,24 @@ class PitotCalibrationApp:
         report = []
         report.append("=========================================")
         report.append("  TEAM ЯTR - ピトー管風洞キャリブレーション報告書")
-        report.append("  (BNO055実測姿勢角リファレンス平均化方式)")
+        report.append("  (BNO055姿勢角 ＆ 基準計 DT-8920 対比方式)")
         report.append("=========================================")
         report.append(f"レポート生成日時: {time.strftime('%Y-%m-%d %H:%M:%S')}")
         report.append(f"測定ポイント数: {len(self.sweep_points)}")
+        report.append(f"基準対気速度源: {'DT-8920 (基準外部計)' if use_dt else '自車ピトー管測定値'}")
         report.append("-----------------------------------------")
         report.append("風洞環境および零点オフセット設定:")
-        report.append(f"  設定大気圧:     {self.get_pressure():.2f} hPa")
-        report.append(f"  手動基準温度:   {self.get_temperature():.1f} °C")
-        report.append(f"  手動基準湿度:   {self.get_humidity():.1f} %")
+        report.append(f"  設定大気圧:     {p_hpa:.2f} hPa")
+        report.append(f"  手動基準温度:   {temp:.1f} °C")
+        report.append(f"  手動基準湿度:   {humid:.1f} %")
+        report.append(f"  算出空気密度 (ρ): {rho:.4f} kg/m³")
         report.append(f"  迎角(AoA)風中零点オフセット差圧: {self.aoa_zero_offset:.2f} Pa")
         report.append(f"  横滑り角(AoS)風中零点オフセット差圧: {self.aos_zero_offset:.2f} Pa")
         report.append("-----------------------------------------")
         report.append("記録された測定ポイント（風中の脈動・振動を平均化済み）:")
         for i, pt in enumerate(self.sweep_points):
-            report.append(f"  点 {i+1:2d} | 対気速度: {pt['avg_speed']:5.2f} m/s | DP_AoA: {pt['avg_aoa_corr']:6.2f} Pa | DP_AoS: {pt['avg_aos_corr']:6.2f} Pa | BNO Pitch: {pt['avg_pitch']:5.2f}° | BNO Yaw: {pt['avg_yaw']:5.2f}°")
+            ref_v = pt['avg_dt_speed'] if use_dt else pt['avg_speed']
+            report.append(f"  点 {i+1:2d} | 基準速度: {ref_v:5.2f} m/s | ピトー速度: {pt['avg_speed']:5.2f} m/s | DP_AoA: {pt['avg_aoa_corr']:6.2f} Pa | DP_AoS: {pt['avg_aos_corr']:6.2f} Pa | BNO Pitch: {pt['avg_pitch']:5.2f}° | BNO Yaw: {pt['avg_yaw']:5.2f}°")
         report.append("-----------------------------------------")
         report.append("校正数式モデル（ 角度 ＝ K × (補正後差圧 / 動圧q) ＋ オフセット ）:")
         
@@ -774,15 +1031,15 @@ class PitotCalibrationApp:
             with open(filepath, 'w', newline='') as f:
                 writer = csv.writer(f)
                 writer.writerow([
-                    "Point ID", "Averaged Airspeed (m/s)", 
+                    "Point ID", "Averaged Pitot Airspeed (m/s)", "Averaged DT-8920 Reference Airspeed (m/s)",
                     "Averaged Corrected DP_AoA (Pa)", "Averaged Corrected DP_AoS (Pa)",
-                    "Averaged BNO055 Pitch Angle (°)", "Averaged BNO055 Yaw Angle (°)", "Averaged Dynamic Pressure q (Pa)"
+                    "Averaged BNO055 Pitch Angle (°)", "Averaged BNO055 Yaw Angle (°)"
                 ])
                 for idx, pt in enumerate(self.sweep_points):
                     writer.writerow([
-                        idx + 1, f"{pt['avg_speed']:.3f}", 
+                        idx + 1, f"{pt['avg_speed']:.3f}", f"{pt['avg_dt_speed']:.3f}",
                         f"{pt['avg_aoa_corr']:.3f}", f"{pt['avg_aos_corr']:.3f}",
-                        f"{pt['avg_pitch']:.3f}", f"{pt['avg_yaw']:.3f}", f"{pt['avg_q']:.3f}"
+                        f"{pt['avg_pitch']:.3f}", f"{pt['avg_yaw']:.3f}"
                     ])
             messagebox.showinfo("保存完了", f"CSVファイルを正常にエクスポートしました：\n{filepath}")
         except Exception as e:
@@ -814,12 +1071,28 @@ class PitotCalibrationApp:
         p_hpa = self.get_pressure()
         rho = self.calculate_density(temp, humid, p_hpa)
         
+        # Calculate real-time comparison differences
+        speed_diff = self.current_data["airspeed"] - self.dt_data["airspeed"]
+        
+        # Raw pressures offset subtraction
+        pitot_aoa_corr = self.current_data["aoa_pa"] - self.aoa_zero_offset
+        pitot_aos_corr = self.current_data["aos_pa"] - self.aos_zero_offset
+        press_diff = (pitot_aoa_corr + pitot_aos_corr)/2.0 - self.dt_data["pressure"]
+        
         self.readout_labels["airspeed"][0].configure(text=f"{self.current_data['airspeed']:.2f}{self.readout_labels['airspeed'][1]}")
+        self.readout_labels["dt_speed"][0].configure(text=f"{self.dt_data['airspeed']:.2f}{self.readout_labels['dt_speed'][1]}")
+        self.readout_labels["speed_error"][0].configure(text=f"{speed_diff:+.2f}{self.readout_labels['speed_error'][1]}")
+        
         self.readout_labels["aoa_pa"][0].configure(text=f"{self.current_data['aoa_pa']:.2f}{self.readout_labels['aoa_pa'][1]}")
         self.readout_labels["aos_pa"][0].configure(text=f"{self.current_data['aos_pa']:.2f}{self.readout_labels['aos_pa'][1]}")
+        self.readout_labels["dt_press"][0].configure(text=f"{self.dt_data['pressure']:.2f}{self.readout_labels['dt_press'][1]}")
+        self.readout_labels["press_error"][0].configure(text=f"{press_diff:+.2f}{self.readout_labels['press_error'][1]}")
+        
         self.readout_labels["pitch"][0].configure(text=f"{self.current_data['pitch']:.2f}{self.readout_labels['pitch'][1]}")
         self.readout_labels["yaw"][0].configure(text=f"{self.current_data['yaw']:.2f}{self.readout_labels['yaw'][1]}")
-        self.readout_labels["density"][0].configure(text=f"{rho:.4f}{self.readout_labels['density'][1]}")
+        
+        # Update raw DT-8920 bytes monitor
+        self.lbl_dt_monitor.configure(text=self.dt_raw_monitor_str)
         
         # History queue
         curr_t = time.time() - self.start_app_time
@@ -830,6 +1103,10 @@ class PitotCalibrationApp:
         self.history_pitch.append(self.current_data["pitch"])
         self.history_yaw.append(self.current_data["yaw"])
         
+        # DT-8920 history
+        self.history_dt_speed.append(self.dt_data["airspeed"])
+        self.history_dt_press.append(self.dt_data["pressure"])
+        
         if len(self.history_time) > self.plot_history_len:
             self.history_time.pop(0)
             self.history_airspeed.pop(0)
@@ -837,6 +1114,8 @@ class PitotCalibrationApp:
             self.history_aos.pop(0)
             self.history_pitch.pop(0)
             self.history_yaw.pop(0)
+            self.history_dt_speed.pop(0)
+            self.history_dt_press.pop(0)
             
         # Draw trends graph
         if self.notebook.index(self.notebook.select()) == 0:
@@ -849,8 +1128,11 @@ class PitotCalibrationApp:
             return
             
         self.line_speed.set_data(self.history_time, self.history_airspeed)
+        self.line_dt_speed.set_data(self.history_time, self.history_dt_speed)
+        
         self.line_aoa_p.set_data(self.history_time, self.history_aoa)
-        self.line_aos_p.set_data(self.history_time, self.history_aos)
+        self.line_dt_press.set_data(self.history_time, self.history_dt_press)
+        
         self.ax_press.relim()
         self.ax_press.autoscale_view()
         
