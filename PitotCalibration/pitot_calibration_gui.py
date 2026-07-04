@@ -205,6 +205,9 @@ class PitotCalibrationApp:
         self.lbl_dt_monitor = ttk.Label(dt_param_frame, text="-- -- -- -- -- -- -- --", font=("Consolas", 9), foreground="#E2E8F0")
         self.lbl_dt_monitor.grid(row=2, column=1, columnspan=2, sticky=tk.W, padx=5)
         
+        btn_diag = ttk.Button(dt_param_frame, text="通信診断ツールを開く", command=self.open_diagnostic_window, style="Action.TButton")
+        btn_diag.grid(row=3, column=0, columnspan=3, pady=6, sticky=tk.EW)
+        
         # 3. Environment settings
         env_frame = ttk.LabelFrame(left_container, text="3. 風洞環境パラメータ (空気密度用)", padding=10)
         env_frame.pack(fill=tk.X, pady=4, padx=5)
@@ -1135,6 +1138,130 @@ class PitotCalibrationApp:
         self.ax_att.autoscale_view()
         
         self.canvas_trends.draw()
+
+    def open_diagnostic_window(self):
+        diag_win = tk.Toplevel(self.root)
+        diag_win.title("DT-8920 通信診断・パケットキャプチャツール")
+        diag_win.geometry("700x550")
+        diag_win.configure(bg="#0F172A")
+        
+        # Style setup for diagnostic window
+        ctrl_frame = ttk.LabelFrame(diag_win, text="診断コントロール", padding=10)
+        ctrl_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        # Grid layout for controls
+        ttk.Label(ctrl_frame, text="COMポート:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=2)
+        port_var = tk.StringVar(value=self.dt_port_var.get())
+        port_combo = ttk.Combobox(ctrl_frame, textvariable=port_var, values=self.get_serial_ports(), width=10)
+        port_combo.grid(row=0, column=1, sticky=tk.W, padx=5, pady=2)
+        
+        ttk.Label(ctrl_frame, text="ボーレート:").grid(row=0, column=2, sticky=tk.W, padx=5, pady=2)
+        baud_var = tk.StringVar(value="9600")
+        baud_combo = ttk.Combobox(ctrl_frame, textvariable=baud_var, values=["9600", "19200", "38400", "57600", "115200"], width=10)
+        baud_combo.grid(row=0, column=3, sticky=tk.W, padx=5, pady=2)
+        
+        dtr_var = tk.BooleanVar(value=True)
+        dtr_check = ttk.Checkbutton(ctrl_frame, text="DTR", variable=dtr_var)
+        dtr_check.grid(row=0, column=4, padx=5)
+        
+        rts_var = tk.BooleanVar(value=True)
+        rts_check = ttk.Checkbutton(ctrl_frame, text="RTS", variable=rts_var)
+        rts_check.grid(row=0, column=5, padx=5)
+        
+        # Connection status & control
+        is_running = False
+        diag_ser = None
+        
+        # Text log area
+        log_frame = ttk.LabelFrame(diag_win, text="通信ログ (Hex / ASCII)", padding=10)
+        log_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        log_text = tk.Text(log_frame, bg="#1E293B", fg="#F8FAFC", insertbackground="#FFFFFF", font=("Consolas", 10))
+        log_text.pack(fill=tk.BOTH, expand=True)
+        
+        def log_message(msg):
+            log_text.insert(tk.END, msg + "\n")
+            log_text.see(tk.END)
+            
+        def toggle_scan():
+            nonlocal is_running, diag_ser
+            if is_running:
+                is_running = False
+                if diag_ser:
+                    try: diag_ser.close()
+                    except: pass
+                btn_start.configure(text="診断開始", style="Start.TButton")
+                log_message("--- 診断停止 ---")
+            else:
+                p = port_var.get()
+                b = baud_var.get()
+                if not p:
+                    messagebox.showerror("エラー", "COMポートを選択してください")
+                    return
+                try:
+                    diag_ser = serial.Serial(p, int(b), timeout=0.1)
+                    diag_ser.dtr = dtr_var.get()
+                    diag_ser.rts = rts_var.get()
+                    is_running = True
+                    btn_start.configure(text="診断停止", style="Stop.TButton")
+                    log_message(f"--- 接続開始 ({p} @ {b} bps, DTR={diag_ser.dtr}, RTS={diag_ser.rts}) ---")
+                    
+                    # Start thread to read
+                    threading.Thread(target=read_loop, daemon=True).start()
+                except Exception as e:
+                    messagebox.showerror("接続エラー", str(e))
+                    
+        def read_loop():
+            nonlocal is_running, diag_ser
+            while is_running and diag_ser and diag_ser.is_open:
+                try:
+                    if diag_ser.in_waiting > 0:
+                        raw = diag_ser.read(diag_ser.in_waiting)
+                        hex_str = " ".join([f"{x:02X}" for x in raw])
+                        ascii_str = raw.decode('ascii', errors='replace').replace('\r', '\\r').replace('\n', '\\n')
+                        diag_win.after(0, lambda h=hex_str, a=ascii_str: log_message(f"受信 [Hex]: {h}\n受信 [Asc]: {a}"))
+                except Exception as e:
+                    diag_win.after(0, lambda ex=str(e): log_message(f"エラー: {ex}"))
+                    break
+                time.sleep(0.05)
+                
+        def send_byte(b_data):
+            nonlocal diag_ser
+            if diag_ser and diag_ser.is_open:
+                try:
+                    diag_ser.dtr = dtr_var.get()
+                    diag_ser.rts = rts_var.get()
+                    diag_ser.write(b_data)
+                    log_message(f"送信: {b_data} (Hex: " + " ".join([f"{x:02X}" for x in b_data]) + ")")
+                except Exception as e:
+                    log_message(f"送信エラー: {str(e)}")
+            else:
+                log_message("ポートが開いていません。")
+
+        # Action panel for sending triggers
+        send_frame = ttk.Frame(diag_win)
+        send_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        btn_start = ttk.Button(send_frame, text="診断開始", command=toggle_scan, style="Start.TButton")
+        btn_start.pack(side=tk.LEFT, padx=5)
+        
+        ttk.Label(send_frame, text="トリガー送信:").pack(side=tk.LEFT, padx=5)
+        
+        triggers = [
+            ("b'C'", b'C'),
+            ("b'D'", b'D'),
+            ("b'A'", b'A'),
+            ("b'S'", b'S'),
+            ("b'M'", b'M'),
+            ("b'\\r\\n'", b'\r\n'),
+            ("0x02", b'\x02'),
+            ("0x03", b'\x03'),
+            ("0x55", b'\x55'),
+            ("0xAA", b'\xAA')
+        ]
+        for name, b_data in triggers:
+            btn = ttk.Button(send_frame, text=name, width=6, command=lambda bd=b_data: send_byte(bd))
+            btn.pack(side=tk.LEFT, padx=2)
 
 if __name__ == "__main__":
     root = tk.Tk()
