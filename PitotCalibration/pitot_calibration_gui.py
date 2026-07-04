@@ -116,6 +116,19 @@ class PitotCalibrationApp:
         style.configure("Treeview", background="#1E293B", fieldbackground="#1E293B", foreground="#F8FAFC")
         style.configure("Treeview.Heading", background="#334155", foreground="#06B6D4", font=("Segoe UI", 9, "bold"))
 
+        # Combobox style customization
+        style.configure("TCombobox", fieldbackground="#1E293B", foreground="#FFFFFF", background="#334155", arrowcolor="#FFFFFF")
+        style.map("TCombobox", fieldbackground=[("readonly", "#1E293B")], foreground=[("readonly", "#FFFFFF")])
+        
+        # Entry style customization
+        style.configure("TEntry", fieldbackground="#1E293B", foreground="#FFFFFF", insertcolor="#FFFFFF")
+        
+        # Option database overrides for the dropdown listboxes (highly critical for Windows Clam theme)
+        self.root.option_add("*TCombobox*Listbox.background", "#1E293B")
+        self.root.option_add("*TCombobox*Listbox.foreground", "#FFFFFF")
+        self.root.option_add("*TCombobox*Listbox.selectBackground", "#3B82F6")
+        self.root.option_add("*TCombobox*Listbox.selectForeground", "#FFFFFF")
+
     def build_ui(self):
         # Main horizontal split
         main_pane = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
