@@ -10,6 +10,8 @@ from tkinter import ttk, messagebox, filedialog
 import numpy as np
 import matplotlib
 matplotlib.use("TkAgg")
+matplotlib.rcParams['font.family'] = 'MS Gothic'
+matplotlib.rcParams['axes.unicode_minus'] = False
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 
@@ -439,6 +441,8 @@ class PitotCalibrationApp:
             
         try:
             self.ser = serial.Serial(port, int(baud), timeout=1)
+            self.ser.dtr = True
+            self.ser.rts = True
             self.serial_connected = True
             self.btn_connect.configure(text="接続を切断", style="Stop.TButton")
             self.lbl_status.configure(text="ピトー管: 接続完了", foreground="#10B981")
@@ -486,6 +490,8 @@ class PitotCalibrationApp:
                 stopbits=serial.STOPBITS_ONE,
                 timeout=0.5
             )
+            self.dt_ser.dtr = True
+            self.dt_ser.rts = True
             self.dt_connected = True
             self.btn_dt_connect.configure(text="接続を切断", style="Stop.TButton")
             self.dt_raw_monitor_str = "接続完了 (受信待機中)"
@@ -558,87 +564,61 @@ class PitotCalibrationApp:
 
     # Background thread reader for DT-8920 reference meter
     def dt8920_read_loop(self):
-        buffer = b""
         while self.dt_connected:
             try:
-                if self.dt_ser and self.dt_ser.in_waiting > 0:
-                    raw_bytes = self.dt_ser.read(self.dt_ser.in_waiting)
-                    self.dt_last_bytes = raw_bytes
-                    buffer += raw_bytes
-                    
-                    # Update Raw Hex Monitor text (last 8 bytes)
-                    hex_str = " ".join([f"{b:02X}" for b in buffer[-8:]])
-                    self.dt_raw_monitor_str = hex_str
-                    
-                    # 1. Check ASCII format (Line terminated by \n or \r)
-                    while b'\n' in buffer or b'\r' in buffer:
-                        idx_n = buffer.find(b'\n')
-                        idx_r = buffer.find(b'\r')
-                        if idx_n != -1 and idx_r != -1:
-                            split_idx = min(idx_n, idx_r)
-                        else:
-                            split_idx = idx_n if idx_n != -1 else idx_r
-                            
-                        line_bytes = buffer[:split_idx]
-                        buffer = buffer[split_idx+1:]
+                if self.dt_ser and self.dt_ser.is_open:
+                    # Read a line of data using standard readline (which blocks or respects timeout)
+                    raw_line = self.dt_ser.readline()
+                    if raw_line:
+                        self.dt_last_bytes = raw_line
                         
-                        if len(line_bytes) == 0:
-                            continue
-                            
+                        # Update Raw Hex Monitor text (last 8 bytes)
+                        hex_str = " ".join([f"{b:02X}" for b in raw_line[-8:]])
+                        self.dt_raw_monitor_str = hex_str
+                        
+                        # Try decoding as ASCII/UTF-8
                         try:
-                            line_str = line_bytes.decode('utf-8', errors='ignore').strip()
+                            line_str = raw_line.decode('utf-8', errors='ignore').strip()
                             
-                            # Parse float using regex
-                            match = re.search(r'[-+]?\d*\.\d+|\d+', line_str)
-                            if match and self.dt_decoder_var.get() == "ascii":
-                                val = float(match.group())
-                                self.update_dt_value(val)
-                        except:
-                            pass
+                            # Extract all numbers from the ASCII string
+                            numbers = [float(x) for x in re.findall(r'[-+]?\d*\.\d+|\d+', line_str)]
                             
-                    # 2. Check Binary formats (Standard 14-byte frames for CEM meters)
-                    # CEM meters send 14-byte blocks. If buffer gets large, parse packets.
-                    if len(buffer) >= 14:
-                        # Scan buffer for packet candidates
-                        # Standard CEM headers: 0xAA or 0x55 or 0x02 or 0x03
-                        packet_parsed = False
-                        for i in range(len(buffer) - 13):
-                            packet = buffer[i:i+14]
-                            
-                            # CEM Binary Decoders
-                            if self.dt_decoder_var.get() in ["cem_be", "cem_le"]:
-                                # CEM standard format stores 16-bit value in byte index 3 and 4
-                                # (Or index 2 and 3 depending on firmware)
-                                if self.dt_decoder_var.get() == "cem_be":
-                                    val_raw = (packet[3] << 8) | packet[4]
+                            if len(numbers) >= 2 and self.dt_decoder_var.get() == "ascii":
+                                p_val = numbers[0]
+                                v_val = numbers[1]
+                                # DT-8920 sends pressure as primary, speed as secondary in multi-mode
+                                if self.dt_mode_var.get() == "speed":
+                                    self.update_dt_value(v_val)
                                 else:
-                                    val_raw = (packet[4] << 8) | packet[3]
-                                    
-                                # If it's a signed 16-bit integer
-                                if val_raw & 0x8000:
-                                    val_raw -= 65536
-                                    
-                                # Often divided by 100 for decimals
-                                val = val_raw / 100.0
+                                    self.update_dt_value(p_val)
+                                self.dt_raw_monitor_str = f"解析成功 (マルチ): P={p_val:.1f}, V={v_val:.1f}"
+                            elif len(numbers) == 1 and self.dt_decoder_var.get() == "ascii":
+                                val = numbers[0]
                                 self.update_dt_value(val)
-                                packet_parsed = True
-                                
-                        if packet_parsed:
-                            buffer = buffer[-13:] # keep rest
-                            
-                    # Prevent buffer overflow if parsing fails
-                    if len(buffer) > 100:
-                        # Try fallback ASCII float search anywhere in the raw buffer
-                        try:
-                            buffer_str = buffer.decode('utf-8', errors='ignore')
-                            matches = re.findall(r'[-+]?\d*\.\d+|\d+', buffer_str)
-                            if matches and self.dt_decoder_var.get() == "ascii":
-                                val = float(matches[-1])
-                                self.update_dt_value(val)
-                        except:
-                            pass
-                        buffer = b"" # flush
-                        
+                                self.dt_raw_monitor_str = f"解析成功 (シングル): {val:.2f}"
+                            else:
+                                # Fallback for binary / Metex non-ASCII representation
+                                val = None
+                                # Check binary CEM BE/LE (typically 14 bytes)
+                                if self.dt_decoder_var.get() == "cem_be" and len(raw_line) >= 5:
+                                    val_raw = (raw_line[3] << 8) | raw_line[4]
+                                    if val_raw & 0x8000: val_raw -= 65536
+                                    val = val_raw / 100.0
+                                elif self.dt_decoder_var.get() == "cem_le" and len(raw_line) >= 5:
+                                    val_raw = (raw_line[4] << 8) | raw_line[3]
+                                    if val_raw & 0x8000: val_raw -= 65536
+                                    val = val_raw / 100.0
+                                    
+                                if val is not None:
+                                    self.update_dt_value(val)
+                                    self.dt_raw_monitor_str = f"バイナリ解析成功: {val:.2f}"
+                                else:
+                                    if len(line_str) > 0:
+                                        self.dt_raw_monitor_str = f"受信文字: {line_str[:15]}"
+                                    else:
+                                        self.dt_raw_monitor_str = f"生受信: {hex_str}"
+                        except Exception as parse_ex:
+                            self.dt_raw_monitor_str = f"デコード失敗: {hex_str}"
             except Exception as e:
                 self.dt_connected = False
                 self.root.after(0, self.on_dt_serial_loss)
