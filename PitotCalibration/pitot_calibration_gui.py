@@ -1,4 +1,5 @@
 import sys
+import struct
 import os
 import time
 import serial
@@ -580,61 +581,58 @@ class PitotCalibrationApp:
 
     # Background thread reader for DT-8920 reference meter
     def dt8920_read_loop(self):
+        buffer = b""
         while self.dt_connected:
             try:
                 if self.dt_ser and self.dt_ser.is_open:
-                    # Read a line of data using standard readline (which blocks or respects timeout)
-                    raw_line = self.dt_ser.readline()
-                    if raw_line:
-                        self.dt_last_bytes = raw_line
+                    if self.dt_ser.in_waiting > 0:
+                        raw = self.dt_ser.read(self.dt_ser.in_waiting)
+                        buffer += raw
+                        self.dt_last_bytes = raw
                         
-                        # Update Raw Hex Monitor text (last 8 bytes)
-                        hex_str = " ".join([f"{b:02X}" for b in raw_line[-8:]])
-                        self.dt_raw_monitor_str = hex_str
-                        
-                        # Try decoding as ASCII/UTF-8
-                        try:
-                            line_str = raw_line.decode('utf-8', errors='ignore').strip()
+                        # Process buffer
+                        while True:
+                            # Find header
+                            header_idx = buffer.find(b'\xAA\xBB')
+                            if header_idx == -1:
+                                # No header found, clear buffer except possibly the last byte if it's \xAA
+                                if len(buffer) > 0 and buffer[-1] == 0xAA:
+                                    buffer = b'\xAA'
+                                else:
+                                    buffer = b""
+                                break
                             
-                            # Extract all numbers from the ASCII string
-                            numbers = [float(x) for x in re.findall(r'[-+]?\d*\.\d+|\d+', line_str)]
+                            # Discard bytes before header
+                            if header_idx > 0:
+                                buffer = buffer[header_idx:]
+                                
+                            # Check if we have a full packet (46 bytes)
+                            if len(buffer) < 46:
+                                break
+                                
+                            # We have at least 46 bytes!
+                            packet = buffer[:46]
+                            buffer = buffer[46:]
                             
-                            if len(numbers) >= 2 and self.dt_decoder_var.get() == "ascii":
-                                p_val = numbers[0]
-                                v_val = numbers[1]
-                                # DT-8920 sends pressure as primary, speed as secondary in multi-mode
+                            # Decode packet
+                            try:
+                                # Header: packet[0:4] = \xAA\xBB\x03\x01
+                                temp = struct.unpack('<f', packet[4:8])[0] * 10.0
+                                velocity = struct.unpack('<f', packet[8:12])[0]
+                                flow = struct.unpack('<f', packet[12:16])[0]
+                                pressure_mbar = struct.unpack('<f', packet[16:20])[0]
+                                pressure_pa = pressure_mbar * 100.0
+                                
+                                # Update values
                                 if self.dt_mode_var.get() == "speed":
-                                    self.update_dt_value(v_val)
+                                    self.update_dt_value(velocity)
                                 else:
-                                    self.update_dt_value(p_val)
-                                self.dt_raw_monitor_str = f"解析成功 (マルチ): P={p_val:.1f}, V={v_val:.1f}"
-                            elif len(numbers) == 1 and self.dt_decoder_var.get() == "ascii":
-                                val = numbers[0]
-                                self.update_dt_value(val)
-                                self.dt_raw_monitor_str = f"解析成功 (シングル): {val:.2f}"
-                            else:
-                                # Fallback for binary / Metex non-ASCII representation
-                                val = None
-                                # Check binary CEM BE/LE (typically 14 bytes)
-                                if self.dt_decoder_var.get() == "cem_be" and len(raw_line) >= 5:
-                                    val_raw = (raw_line[3] << 8) | raw_line[4]
-                                    if val_raw & 0x8000: val_raw -= 65536
-                                    val = val_raw / 100.0
-                                elif self.dt_decoder_var.get() == "cem_le" and len(raw_line) >= 5:
-                                    val_raw = (raw_line[4] << 8) | raw_line[3]
-                                    if val_raw & 0x8000: val_raw -= 65536
-                                    val = val_raw / 100.0
+                                    self.update_dt_value(pressure_pa)
                                     
-                                if val is not None:
-                                    self.update_dt_value(val)
-                                    self.dt_raw_monitor_str = f"バイナリ解析成功: {val:.2f}"
-                                else:
-                                    if len(line_str) > 0:
-                                        self.dt_raw_monitor_str = f"受信文字: {line_str[:15]}"
-                                    else:
-                                        self.dt_raw_monitor_str = f"生受信: {hex_str}"
-                        except Exception as parse_ex:
-                            self.dt_raw_monitor_str = f"デコード失敗: {hex_str}"
+                                # Display in Raw Monitor
+                                self.dt_raw_monitor_str = f"風速:{velocity:.2f}m/s 差圧:{pressure_pa:.1f}Pa 気温:{temp:.1f}°C"
+                            except Exception as parse_ex:
+                                self.dt_raw_monitor_str = "パケット解析エラー"
             except Exception as e:
                 self.dt_connected = False
                 self.root.after(0, self.on_dt_serial_loss)
