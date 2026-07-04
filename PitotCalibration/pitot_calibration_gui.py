@@ -196,18 +196,12 @@ class PitotCalibrationApp:
         r_dt_press = ttk.Radiobutton(dt_param_frame, text="差圧 (Pa)", variable=self.dt_mode_var, value="pressure")
         r_dt_press.grid(row=0, column=2, sticky=tk.W, padx=5)
         
-        ttk.Label(dt_param_frame, text="解析デコーダ:").grid(row=1, column=0, sticky=tk.W, pady=2)
-        self.dt_decoder_var = tk.StringVar(value="ascii")
-        self.dt_decoder_combo = ttk.Combobox(dt_param_frame, textvariable=self.dt_decoder_var, values=["ascii", "cem_be", "cem_le"], width=12)
-        self.dt_decoder_combo.grid(row=1, column=1, columnspan=2, sticky=tk.W, padx=5)
-        self.dt_decoder_combo.bind("<<ComboboxSelected>>", self.on_dt_decoder_change)
-        
-        ttk.Label(dt_param_frame, text="生受信バイト:").grid(row=2, column=0, sticky=tk.W, pady=2)
+        ttk.Label(dt_param_frame, text="測定値モニター:").grid(row=1, column=0, sticky=tk.W, pady=2)
         self.lbl_dt_monitor = ttk.Label(dt_param_frame, text="-- -- -- -- -- -- -- --", font=("Consolas", 9), foreground="#E2E8F0")
-        self.lbl_dt_monitor.grid(row=2, column=1, columnspan=2, sticky=tk.W, padx=5)
+        self.lbl_dt_monitor.grid(row=1, column=1, columnspan=2, sticky=tk.W, padx=5)
         
         btn_diag = ttk.Button(dt_param_frame, text="通信診断ツールを開く", command=self.open_diagnostic_window, style="Action.TButton")
-        btn_diag.grid(row=3, column=0, columnspan=3, pady=6, sticky=tk.EW)
+        btn_diag.grid(row=2, column=0, columnspan=3, pady=6, sticky=tk.EW)
         
         # 3. Environment settings
         env_frame = ttk.LabelFrame(left_container, text="3. 風洞環境パラメータ (空気密度用)", padding=10)
@@ -656,9 +650,7 @@ class PitotCalibrationApp:
             else:
                 self.dt_data["airspeed"] = 0.0
 
-    def on_dt_decoder_change(self, event):
-        # Reset buffer on decoder change
-        pass
+
 
     def on_dt_serial_loss(self):
         self.disconnect_dt_serial()
