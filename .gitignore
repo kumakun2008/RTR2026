@@ -1,1 +1,17 @@
 .pio
+.vscode/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+PitotCalibration/CSV/
+
+# Android
+.gradle/
+.idea/
+local.properties
+**/build/
+AndroidTelemetry/app/release/
