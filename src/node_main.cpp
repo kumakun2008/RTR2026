@@ -191,6 +191,7 @@ void taskSensorAcquisition(void* pvParameters) {
             Serial.printf(">main_press:%.2f\n", baroData.pressure * 100.0f);
             Serial.printf(">main_temp:%.2f\n", baroData.temperature);
             Serial.printf(">main_bat:%.2f\n", battery.readVoltage());
+            Serial.printf(">main_airspeed:%.2f\n", flightData.pitotPress32);
         }
 
         loopCounter++;
@@ -237,7 +238,7 @@ void taskCANReceive(void* pvParameters) {
             lastRxMain = millis();
 
             if (rxId == CAN_ID_PITOT_AIRSPEED) {
-                flightData.pitotPress32 = getFloat(rxData, CAN_Scale::PRESSURE);
+                flightData.pitotPress32 = getFloat(rxData, CAN_Scale::GPS_SPEED);
                 lastRxPitot = millis();
             }
             else if (rxId == CAN_ID_PITOT_AOA) {
