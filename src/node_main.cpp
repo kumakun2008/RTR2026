@@ -191,7 +191,7 @@ void taskSensorAcquisition(void* pvParameters) {
             Serial.printf(">main_press:%.2f\n", baroData.pressure * 100.0f);
             Serial.printf(">main_temp:%.2f\n", baroData.temperature);
             Serial.printf(">main_bat:%.2f\n", battery.readVoltage());
-            Serial.printf(">main_airspeed:%.2f\n", flightData.pitotPress32);
+            Serial.printf(">gps_speed:%.2f\n", flightData.gpsSpeed);
         }
 
         loopCounter++;
