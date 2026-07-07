@@ -52,19 +52,6 @@ bool TimeSync::begin(HardwareSerial& gpsSerial, int ppsPin, int rxPin, int txPin
     
     _gpsSerial->begin(115200, SERIAL_8N1, _rxPin, _txPin);
     
-    // Configure UM982C commands for the program
-    delay(500); // Wait for module serial to stabilize
-    _gpsSerial->println("unlog");
-    delay(100);
-    _gpsSerial->println("GPRMC 0.1"); // Recommended Minimum Navigation (10Hz)
-    delay(100);
-    _gpsSerial->println("GPGGA 0.1"); // GPS Fix Data (10Hz)
-    delay(100);
-    _gpsSerial->println("GPTHS 0.1"); // Dual-antenna True Heading (10Hz)
-    delay(100);
-    _gpsSerial->println("saveconfig");
-    delay(200);
-    
     BaseType_t result = xTaskCreatePinnedToCore(
         gpsParseTask,
         "GPSParseTask",
@@ -108,6 +95,9 @@ void TimeSync::gpsParseTask(void* pvParameters) {
     while (true) {
         while (sync->_gpsSerial->available() > 0) {
             char c = sync->_gpsSerial->read();
+#ifdef NODE_GPS
+            Serial.write(c);
+#endif
             if (c == '\n' || c == '\r') {
                 if (idx > 0) {
                     buffer[idx] = '\0';

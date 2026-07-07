@@ -82,7 +82,12 @@ void setup() {
 }
 
 void loop() {
-    vTaskDelay(portMAX_DELAY);
+    while (true) {
+        while (Serial.available() > 0) {
+            Serial2.write(Serial.read());
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
 }
 
 void taskSensorAcquisition(void* pvParameters) {
