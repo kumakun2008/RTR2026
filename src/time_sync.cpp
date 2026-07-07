@@ -52,6 +52,19 @@ bool TimeSync::begin(HardwareSerial& gpsSerial, int ppsPin, int rxPin, int txPin
     
     _gpsSerial->begin(115200, SERIAL_8N1, _rxPin, _txPin);
     
+    // Configure UM982C commands for the program
+    delay(500); // Wait for module serial to stabilize
+    _gpsSerial->println("unlog");
+    delay(100);
+    _gpsSerial->println("GPRMC 0.1"); // Recommended Minimum Navigation (10Hz)
+    delay(100);
+    _gpsSerial->println("GPGGA 0.1"); // GPS Fix Data (10Hz)
+    delay(100);
+    _gpsSerial->println("GPTHS 0.1"); // Dual-antenna True Heading (10Hz)
+    delay(100);
+    _gpsSerial->println("saveconfig");
+    delay(200);
+    
     BaseType_t result = xTaskCreatePinnedToCore(
         gpsParseTask,
         "GPSParseTask",
@@ -197,6 +210,31 @@ void TimeSync::parseNMEA(const char* sentence) {
             _latestGPSData.fix_status = fixQual;
             _latestGPSData.sat_count = satCount;
             _latestGPSData.altitude = altMeters;
+            _hasFreshGPS = true;
+            xSemaphoreGive(_timeMutex);
+        }
+    }
+    // 3. Parse GPTHS / GNTHS (True Heading and Status) for dual-antenna heading
+    else if (strncmp(sentence, "$GPTHS", 6) == 0 || strncmp(sentence, "$GNTHS", 6) == 0) {
+        char temp[128];
+        strncpy(temp, sentence, sizeof(temp));
+        temp[sizeof(temp)-1] = '\0';
+        
+        char* fields[10];
+        int fieldCount = 0;
+        char* token = strtok(temp, ",");
+        while (token != NULL && fieldCount < 10) {
+            fields[fieldCount++] = token;
+            token = strtok(NULL, ",");
+        }
+        
+        if (fieldCount < 3) return;
+        if (fields[2][0] != 'A') return; // Status: A=active, V=void
+        
+        float headingDeg = atof(fields[1]);
+        
+        if (xSemaphoreTake(_timeMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+            _latestGPSData.heading = (uint16_t)(headingDeg * 100.0f);
             _hasFreshGPS = true;
             xSemaphoreGive(_timeMutex);
         }
