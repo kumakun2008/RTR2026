@@ -379,6 +379,53 @@ bool BNO055Sensor::read(float& roll, float& pitch, float& yaw) {
     return true;
 }
 
+bool BNO055Sensor::readAll(float& roll, float& pitch, float& yaw,
+                           float& accX, float& accY, float& accZ,
+                           float& gyroX, float& gyroY, float& gyroZ,
+                           float& magX, float& magY, float& magZ) {
+    if (!_initialized) return false;
+
+    uint8_t rawData[24];
+    // Read registers from ACC_DATA_X_LSB (0x08) to EUL_PITCH_MSB (0x1F) (24 bytes)
+    if (!_i2c.readRegister(_address, 0x08, rawData, 24)) {
+        return false;
+    }
+
+    int16_t rawAccX  = (int16_t)((rawData[1] << 8) | rawData[0]);
+    int16_t rawAccY  = (int16_t)((rawData[3] << 8) | rawData[2]);
+    int16_t rawAccZ  = (int16_t)((rawData[5] << 8) | rawData[4]);
+
+    int16_t rawMagX  = (int16_t)((rawData[7] << 8) | rawData[6]);
+    int16_t rawMagY  = (int16_t)((rawData[9] << 8) | rawData[8]);
+    int16_t rawMagZ  = (int16_t)((rawData[11] << 8) | rawData[10]);
+
+    int16_t rawGyroX = (int16_t)((rawData[13] << 8) | rawData[12]);
+    int16_t rawGyroY = (int16_t)((rawData[15] << 8) | rawData[14]);
+    int16_t rawGyroZ = (int16_t)((rawData[17] << 8) | rawData[16]);
+
+    int16_t rawYaw   = (int16_t)((rawData[19] << 8) | rawData[18]);
+    int16_t rawRoll  = (int16_t)((rawData[21] << 8) | rawData[20]);
+    int16_t rawPitch = (int16_t)((rawData[23] << 8) | rawData[22]);
+
+    accX  = (float)rawAccX / 100.0f;
+    accY  = (float)rawAccY / 100.0f;
+    accZ  = (float)rawAccZ / 100.0f;
+
+    magX  = (float)rawMagX / 16.0f;
+    magY  = (float)rawMagY / 16.0f;
+    magZ  = (float)rawMagZ / 16.0f;
+
+    gyroX = (float)rawGyroX / 16.0f;
+    gyroY = (float)rawGyroY / 16.0f;
+    gyroZ = (float)rawGyroZ / 16.0f;
+
+    yaw   = (float)rawYaw / 16.0f;
+    roll  = (float)rawRoll / 16.0f;
+    pitch = (float)rawPitch / 16.0f;
+
+    return true;
+}
+
 // ==========================================
 // SHT41 Temp and Humidity Sensor Implementation
 // ==========================================

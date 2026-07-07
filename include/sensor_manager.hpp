@@ -153,6 +153,19 @@ public:
      * @return true on success, false on communication failure.
      */
     bool read(float& roll, float& pitch, float& yaw);
+
+    /**
+     * @brief Read Euler angles, Acceleration, Gyroscope, and Magnetometer data.
+     * @param roll, pitch, yaw Euler angles (degrees).
+     * @param accX, accY, accZ Acceleration (m/s^2).
+     * @param gyroX, gyroY, gyroZ Angular velocity (dps).
+     * @param magX, magY, magZ Magnetic field (uT).
+     * @return true on success, false on communication failure.
+     */
+    bool readAll(float& roll, float& pitch, float& yaw,
+                 float& accX, float& accY, float& accZ,
+                 float& gyroX, float& gyroY, float& gyroZ,
+                 float& magX, float& magY, float& magZ);
 };
 
 /**

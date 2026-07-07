@@ -122,6 +122,9 @@ void taskSensorAcquisition(void* pvParameters) {
     float press31_1 = 0, temp31_1 = 0;
     float press31_2 = 0, temp31_2 = 0;
     float roll = 0, pitch = 0, yaw = 0;
+    float accX = 0, accY = 0, accZ = 0;
+    float gyroX = 0, gyroY = 0, gyroZ = 0;
+    float magX = 0, magY = 0, magZ = 0;
     float hum = 0, tempSHT = 0;
 
     while (true) {
@@ -156,7 +159,7 @@ void taskSensorAcquisition(void* pvParameters) {
             canBus.transmitScaled(CAN_ID_PITOT_AOS, press31_2, CAN_Scale::PRESSURE);
         }
 
-        if (pitotIMU.read(roll, pitch, yaw)) {
+        if (pitotIMU.readAll(roll, pitch, yaw, accX, accY, accZ, gyroX, gyroY, gyroZ, magX, magY, magZ)) {
             canBus.transmitScaled(CAN_ID_PITOT_PITCH, pitch, CAN_Scale::ANGLE);
             canBus.transmitScaled(CAN_ID_PITOT_ROLL, roll, CAN_Scale::ANGLE);
             canBus.transmitScaled(CAN_ID_PITOT_YAW, yaw, CAN_Scale::ANGLE);
@@ -175,11 +178,21 @@ void taskSensorAcquisition(void* pvParameters) {
         if (millis() - lastPlot >= 100) {
             lastPlot = millis();
             Serial.printf(">pitot_airspeed:%.2f\n", airspeed);
+            Serial.printf(">pitot_press_speed:%.2f\n", press32);
             Serial.printf(">pitot_aoa:%.2f\n", press31_1);
             Serial.printf(">pitot_aos:%.2f\n", press31_2);
             Serial.printf(">pitot_pitch:%.2f\n", pitch);
             Serial.printf(">pitot_roll:%.2f\n", roll);
             Serial.printf(">pitot_yaw:%.2f\n", yaw);
+            Serial.printf(">pitot_accx:%.3f\n", accX);
+            Serial.printf(">pitot_accy:%.3f\n", accY);
+            Serial.printf(">pitot_accz:%.3f\n", accZ);
+            Serial.printf(">pitot_gyrox:%.3f\n", gyroX);
+            Serial.printf(">pitot_gyroy:%.3f\n", gyroY);
+            Serial.printf(">pitot_gyroz:%.3f\n", gyroZ);
+            Serial.printf(">pitot_magx:%.3f\n", magX);
+            Serial.printf(">pitot_magy:%.3f\n", magY);
+            Serial.printf(">pitot_magz:%.3f\n", magZ);
             Serial.printf(">pitot_temp:%.2f\n", tempSHT);
             Serial.printf(">pitot_humid:%.2f\n", hum);
         }
