@@ -98,6 +98,7 @@ struct GPSPayload {
     uint8_t fix_status;   ///< Fix quality (0=no fix, 1=single, 2=diff, 4=RTK fixed, etc.)
     uint16_t heading;     ///< Heading (degrees * 100, 0-35999)
     float  utc;           ///< UTC Time (HHMMSS.SS format)
+    float  hdop;          ///< Horizontal Dilution of Precision
 };
 
 /**

@@ -151,18 +151,31 @@ void taskSensorAcquisition(void* pvParameters) {
         if (ok32) {
             airspeed = (press32 > 0.0f) ? sqrt(2.0f * press32 / 1.225f) : 0.0f;
             canBus.transmitScaled(CAN_ID_PITOT_AIRSPEED, airspeed, CAN_Scale::GPS_SPEED);
+            canBus.transmitScaled(CAN_ID_PITOT_PRESS_RAW_SDP32, press32, CAN_Scale::PRESSURE);
+            canBus.transmitScaled(CAN_ID_PITOT_TEMP_RAW_SDP, temp32, CAN_Scale::TEMP);
         }
         if (ok31_1) {
             canBus.transmitScaled(CAN_ID_PITOT_AOA, press31_1, CAN_Scale::PRESSURE);
+            canBus.transmitScaled(CAN_ID_PITOT_PRESS_RAW_SDP31_1, press31_1, CAN_Scale::PRESSURE);
         }
         if (ok31_2) {
             canBus.transmitScaled(CAN_ID_PITOT_AOS, press31_2, CAN_Scale::PRESSURE);
+            canBus.transmitScaled(CAN_ID_PITOT_PRESS_RAW_SDP31_2, press31_2, CAN_Scale::PRESSURE);
         }
 
         if (pitotIMU.readAll(roll, pitch, yaw, accX, accY, accZ, gyroX, gyroY, gyroZ, magX, magY, magZ)) {
             canBus.transmitScaled(CAN_ID_PITOT_PITCH, pitch, CAN_Scale::ANGLE);
             canBus.transmitScaled(CAN_ID_PITOT_ROLL, roll, CAN_Scale::ANGLE);
             canBus.transmitScaled(CAN_ID_PITOT_YAW, yaw, CAN_Scale::ANGLE);
+            canBus.transmitScaled(CAN_ID_PITOT_ACC_X, accX, CAN_Scale::ACCEL);
+            canBus.transmitScaled(CAN_ID_PITOT_ACC_Y, accY, CAN_Scale::ACCEL);
+            canBus.transmitScaled(CAN_ID_PITOT_ACC_Z, accZ, CAN_Scale::ACCEL);
+            canBus.transmitScaled(CAN_ID_PITOT_GYRO_X, gyroX, CAN_Scale::GYRO);
+            canBus.transmitScaled(CAN_ID_PITOT_GYRO_Y, gyroY, CAN_Scale::GYRO);
+            canBus.transmitScaled(CAN_ID_PITOT_GYRO_Z, gyroZ, CAN_Scale::GYRO);
+            canBus.transmitScaled(CAN_ID_PITOT_MAG_X, magX, CAN_Scale::MAG);
+            canBus.transmitScaled(CAN_ID_PITOT_MAG_Y, magY, CAN_Scale::MAG);
+            canBus.transmitScaled(CAN_ID_PITOT_MAG_Z, magZ, CAN_Scale::MAG);
         }
 
         // Poll slow SHT41 temperature and humidity sensor at 1Hz (every 100 loops)

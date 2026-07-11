@@ -40,6 +40,19 @@ constexpr uint32_t CAN_ID_PITOT_ROLL    = 0x034;
 constexpr uint32_t CAN_ID_PITOT_YAW     = 0x035;
 constexpr uint32_t CAN_ID_PITOT_TEMP    = 0x036;
 constexpr uint32_t CAN_ID_PITOT_HUMID   = 0x037;
+constexpr uint32_t CAN_ID_PITOT_ACC_X   = 0x038;
+constexpr uint32_t CAN_ID_PITOT_ACC_Y   = 0x039;
+constexpr uint32_t CAN_ID_PITOT_ACC_Z   = 0x03A;
+constexpr uint32_t CAN_ID_PITOT_GYRO_X  = 0x03B;
+constexpr uint32_t CAN_ID_PITOT_GYRO_Y  = 0x03C;
+constexpr uint32_t CAN_ID_PITOT_GYRO_Z  = 0x03D;
+constexpr uint32_t CAN_ID_PITOT_MAG_X   = 0x03E;
+constexpr uint32_t CAN_ID_PITOT_MAG_Y   = 0x03F;
+constexpr uint32_t CAN_ID_PITOT_MAG_Z   = 0x060;
+constexpr uint32_t CAN_ID_PITOT_PRESS_RAW_SDP32   = 0x061;
+constexpr uint32_t CAN_ID_PITOT_PRESS_RAW_SDP31_1 = 0x062;
+constexpr uint32_t CAN_ID_PITOT_PRESS_RAW_SDP31_2 = 0x063;
+constexpr uint32_t CAN_ID_PITOT_TEMP_RAW_SDP      = 0x064;
 
 // [Node 1] Main Board - LPS22
 constexpr uint32_t CAN_ID_MAIN_PRESS    = 0x040;
@@ -58,6 +71,10 @@ constexpr uint32_t CAN_ID_GPS_ALT       = 0x054;
 constexpr uint32_t CAN_ID_GPS_SPEED     = 0x055;
 constexpr uint32_t CAN_ID_GPS_AZIMUTH   = 0x056;
 constexpr uint32_t CAN_ID_GPS_UTC       = 0x057;
+constexpr uint32_t CAN_ID_GPS_SATS      = 0x058;
+constexpr uint32_t CAN_ID_GPS_HDOP      = 0x059;
+constexpr uint32_t CAN_ID_GPS_FIX       = 0x05A;
+
 
 // Status & UI
 constexpr uint32_t CAN_ID_BATTERY_VOLT  = 0x070;
@@ -87,6 +104,7 @@ namespace CAN_Scale {
     constexpr float GPS_ALT   = 100.0f;
     constexpr float GPS_SPEED = 100.0f;
     constexpr float GPS_AZIMUTH = 100.0f;
+    constexpr float GPS_HDOP  = 100.0f;
     constexpr float BATTERY   = 100.0f;
 }
 

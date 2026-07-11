@@ -51,7 +51,7 @@ void CANManager::end() {
 bool CANManager::transmitRaw(uint32_t id, const uint8_t* data, uint8_t dlc) {
     if (!_initialized) return false;
     
-    twai_message_t msg;
+    twai_message_t msg = {};
     msg.identifier = id;
     msg.extd = 0; 
     msg.rtr = 0;  
@@ -69,7 +69,7 @@ bool CANManager::transmitRaw(uint32_t id, const uint8_t* data, uint8_t dlc) {
 bool CANManager::receiveRaw(uint32_t& id, uint8_t* data, uint8_t& dlc, uint32_t timeoutMs) {
     if (!_initialized) return false;
     
-    twai_message_t msg;
+    twai_message_t msg = {};
     if (twai_receive(&msg, pdMS_TO_TICKS(timeoutMs)) == ESP_OK) {
         id = msg.identifier;
         dlc = msg.data_length_code;

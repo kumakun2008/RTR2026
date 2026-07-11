@@ -24,6 +24,7 @@ uint32_t otaTimeoutStart = 0;
 
 void taskSensorAcquisition(void* pvParameters);
 void taskCANReceive(void* pvParameters);
+void taskSerialPassthrough(void* pvParameters);
 void enterOTAMode();
 
 void enterOTAMode() {
@@ -77,16 +78,33 @@ void setup() {
     gpsSync.begin(Serial2, GPS_PPS_PIN, GPS_RX_PIN, GPS_TX_PIN);
     xTaskCreatePinnedToCore(taskSensorAcquisition, "GPSTask", 4096, NULL, 5, NULL, 1);
     xTaskCreatePinnedToCore(taskCANReceive, "CANRxTask", 3072, NULL, 3, NULL, 1);
+    xTaskCreatePinnedToCore(taskSerialPassthrough, "SerialPassTask", 2048, NULL, 4, NULL, 1);
 
     Serial.println("--- Initialization Complete ---");
 }
 
 void loop() {
+    vTaskDelay(portMAX_DELAY);
+}
+
+void taskSerialPassthrough(void* pvParameters) {
+    String cmdBuffer = "";
     while (true) {
         while (Serial.available() > 0) {
-            Serial2.write(Serial.read());
+            char c = Serial.read();
+            Serial2.write(c);
+            
+            // Accumulate command for PC screen feedback
+            if (c == '\r' || c == '\n') {
+                if (cmdBuffer.length() > 0) {
+                    Serial.printf("\n[ESP32 -> GPS: %s]\n", cmdBuffer.c_str());
+                    cmdBuffer = "";
+                }
+            } else if (c >= 32 && c <= 126) {
+                cmdBuffer += c;
+            }
         }
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(1)); // 1ms responsiveness
     }
 }
 
@@ -105,8 +123,13 @@ void taskSensorAcquisition(void* pvParameters) {
             canBus.transmitScaled(CAN_ID_GPS_SPEED, gpsData.speed, CAN_Scale::GPS_SPEED);
             canBus.transmitScaled(CAN_ID_GPS_AZIMUTH, (float)gpsData.heading, CAN_Scale::GPS_AZIMUTH);
             
-            // UTC time as int32
+            // JST time as int32 (stored in utc field)
             canBus.transmitInt32(CAN_ID_GPS_UTC, (int32_t)gpsData.utc);
+            
+            // Transmit new GPS metrics
+            canBus.transmitInt32(CAN_ID_GPS_SATS, (int32_t)gpsData.sat_count);
+            canBus.transmitInt32(CAN_ID_GPS_FIX, (int32_t)gpsData.fix_status);
+            canBus.transmitScaled(CAN_ID_GPS_HDOP, gpsData.hdop, CAN_Scale::GPS_HDOP);
 
             // Teleplot Output (10Hz)
             Serial.printf(">gps_lat:%.6f\n", gpsData.latitude);

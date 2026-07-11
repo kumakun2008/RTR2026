@@ -211,8 +211,10 @@ void taskCANReceive(void* pvParameters) {
 
     static uint64_t gpsLatRaw = 0;
     static uint64_t gpsLonRaw = 0;
-    static bool updateGPSLat = false;
-    static bool updateGPSLon = false;
+    static bool hasLatUpper = false;
+    static bool hasLatLower = false;
+    static bool hasLonUpper = false;
+    static bool hasLonLower = false;
 
     while (true) {
         if (isOtaMode) {
@@ -296,25 +298,25 @@ void taskCANReceive(void* pvParameters) {
                 uint32_t upper;
                 memcpy(&upper, rxData, 4);
                 gpsLatRaw = ((uint64_t)upper << 32) | (gpsLatRaw & 0xFFFFFFFF);
-                updateGPSLat = true;
+                hasLatUpper = true;
             }
             else if (rxId == CAN_ID_GPS_LAT_LOWER) {
                 uint32_t lower;
                 memcpy(&lower, rxData, 4);
                 gpsLatRaw = (gpsLatRaw & 0xFFFFFFFF00000000ULL) | lower;
-                updateGPSLat = true;
+                hasLatLower = true;
             }
             else if (rxId == CAN_ID_GPS_LON_UPPER) {
                 uint32_t upper;
                 memcpy(&upper, rxData, 4);
                 gpsLonRaw = ((uint64_t)upper << 32) | (gpsLonRaw & 0xFFFFFFFF);
-                updateGPSLon = true;
+                hasLonUpper = true;
             }
             else if (rxId == CAN_ID_GPS_LON_LOWER) {
                 uint32_t lower;
                 memcpy(&lower, rxData, 4);
                 gpsLonRaw = (gpsLonRaw & 0xFFFFFFFF00000000ULL) | lower;
-                updateGPSLon = true;
+                hasLonLower = true;
             }
             else if (rxId == CAN_ID_GPS_ALT) {
                 flightData.gpsAlt = getFloat(rxData, CAN_Scale::GPS_ALT);
@@ -334,14 +336,16 @@ void taskCANReceive(void* pvParameters) {
                 flightData.baroPress = getFloat(rxData, CAN_Scale::PRESSURE) / 100.0f;
             }
             
-            if (updateGPSLat) {
+            if (hasLatUpper && hasLatLower) {
                 memcpy(&flightData.gpsLat, &gpsLatRaw, 8);
-                updateGPSLat = false;
+                hasLatUpper = false;
+                hasLatLower = false;
                 flightData.has_gpsPos = true;
             }
-            if (updateGPSLon) {
+            if (hasLonUpper && hasLonLower) {
                 memcpy(&flightData.gpsLon, &gpsLonRaw, 8);
-                updateGPSLon = false;
+                hasLonUpper = false;
+                hasLonLower = false;
                 flightData.has_gpsPos = true;
             }
         }

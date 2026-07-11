@@ -55,8 +55,8 @@ void onI2CRequest() {
 void initCAN() {
     twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(CAN_TX_PIN, CAN_RX_PIN, TWAI_MODE_NORMAL);
     
-    // Set timing to 500kbps (per communication specification sheet)
-    twai_timing_config_t t_config = TWAI_TIMING_CONFIG_500KBITS();
+    // Set timing to 1Mbps (Unified with other nodes to prevent bus errors)
+    twai_timing_config_t t_config = TWAI_TIMING_CONFIG_1MBITS();
     twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
 
     if (twai_driver_install(&g_config, &t_config, &f_config) == ESP_OK) {
@@ -74,7 +74,7 @@ void initCAN() {
 }
 
 void sendSensorData(uint32_t id, const uint8_t* data, uint8_t dlc) {
-    twai_message_t message;
+    twai_message_t message = {};
     message.identifier = id;
     message.extd = 0;
     message.rtr = 0;

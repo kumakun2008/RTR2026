@@ -18,6 +18,7 @@ SemaphoreHandle_t TimeSync::_timeMutex = NULL;
 
 GPSPayload TimeSync::_latestGPSData = { 0.0, 0.0, 0.0f, 0.0f, 0, 0, 0, 0.0f };
 volatile bool TimeSync::_hasFreshGPS = false;
+static volatile uint32_t s_lastDualAntennaHeadingMs = 0;
 
 TimeSync::TimeSync()
     : _gpsSerial(NULL), _ppsPin(-1), _rxPin(-1), _txPin(-1),
@@ -148,12 +149,13 @@ void TimeSync::parseNMEA(const char* sentence) {
         float speedMs = atof(speedKnotsStr) * 0.514444f; // knots to m/s
         float headingDeg = atof(courseStr);
         
-        // Update UTC clock offset using PPS interrupt sync
+        // Update JST clock offset (UTC + 9 hours) using PPS interrupt sync
         if (_ppsTriggered) {
             uint64_t utcEpochUs = convertNMEAToEpochUs(timeStr, dateStr);
             if (utcEpochUs > 0) {
+                uint64_t jstEpochUs = utcEpochUs + (9ULL * 3600ULL * 1000000ULL);
                 if (xSemaphoreTake(_timeMutex, portMAX_DELAY) == pdTRUE) {
-                    _utcOffsetUs = utcEpochUs - _lastPPSUs;
+                    _utcOffsetUs = jstEpochUs - _lastPPSUs;
                     _synced = true;
                     xSemaphoreGive(_timeMutex);
                 }
@@ -161,14 +163,26 @@ void TimeSync::parseNMEA(const char* sentence) {
             _ppsTriggered = false;
         }
         
+        // Convert UTC time to JST for display/CAN transmission
+        float utcFloat = atof(timeStr);
+        int hh = (int)(utcFloat / 10000.0);
+        int mm = ((int)(utcFloat / 100.0)) % 100;
+        float ss = fmod(utcFloat, 100.0);
+        int jstH = (hh + 9) % 24;
+        float jstTime = jstH * 10000.0f + mm * 100.0f + ss;
+        
         // Update cache
         if (xSemaphoreTake(_timeMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
             _latestGPSData.latitude = latVal;
             _latestGPSData.longitude = lonVal;
             _latestGPSData.speed = speedMs;
-            _latestGPSData.heading = (uint16_t)(headingDeg * 100.0f);
-            _latestGPSData.utc = atof(timeStr);
+            _latestGPSData.utc = jstTime;
             _hasFreshGPS = true;
+            
+            // Only update heading from RMC if dual-antenna heading hasn't updated in 3 seconds
+            if (millis() - s_lastDualAntennaHeadingMs > 3000) {
+                _latestGPSData.heading = (uint16_t)(headingDeg * 100.0f);
+            }
             xSemaphoreGive(_timeMutex);
         }
     }
@@ -190,22 +204,26 @@ void TimeSync::parseNMEA(const char* sentence) {
         
         const char* fixQualStr = fields[6];
         const char* satCountStr = fields[7];
+        const char* hdopStr = fields[8];
         const char* altStr = fields[9];
         
         uint8_t fixQual = atoi(fixQualStr);
         uint8_t satCount = atoi(satCountStr);
+        float hdopVal = atof(hdopStr);
         float altMeters = atof(altStr);
         
         if (xSemaphoreTake(_timeMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
             _latestGPSData.fix_status = fixQual;
             _latestGPSData.sat_count = satCount;
+            _latestGPSData.hdop = hdopVal;
             _latestGPSData.altitude = altMeters;
             _hasFreshGPS = true;
             xSemaphoreGive(_timeMutex);
         }
     }
-    // 3. Parse GPTHS / GNTHS (True Heading and Status) for dual-antenna heading
-    else if (strncmp(sentence, "$GPTHS", 6) == 0 || strncmp(sentence, "$GNTHS", 6) == 0) {
+    // 3. Parse GPTHS / GNTHS or GPHDT / GNHDT (True Heading) for dual-antenna heading
+    else if (strncmp(sentence, "$GPTHS", 6) == 0 || strncmp(sentence, "$GNTHS", 6) == 0 ||
+             strncmp(sentence, "$GPHDT", 6) == 0 || strncmp(sentence, "$GNHDT", 6) == 0) {
         char temp[128];
         strncpy(temp, sentence, sizeof(temp));
         temp[sizeof(temp)-1] = '\0';
@@ -219,13 +237,15 @@ void TimeSync::parseNMEA(const char* sentence) {
         }
         
         if (fieldCount < 3) return;
-        if (fields[2][0] != 'A') return; // Status: A=active, V=void
+        // GPTHS uses 'A' for active status. GPHDT uses 'T' for True.
+        if (fields[2][0] != 'A' && fields[2][0] != 'T') return;
         
         float headingDeg = atof(fields[1]);
         
         if (xSemaphoreTake(_timeMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
             _latestGPSData.heading = (uint16_t)(headingDeg * 100.0f);
             _hasFreshGPS = true;
+            s_lastDualAntennaHeadingMs = millis();
             xSemaphoreGive(_timeMutex);
         }
     }
@@ -242,8 +262,8 @@ double TimeSync::parseDegrees(const char* val, const char* dir) {
     int minStartIdx = (dot - val) - 2;
     if (minStartIdx < 0) return 0.0;
     
-    char degBuf[8];
-    char minBuf[10];
+    char degBuf[16];
+    char minBuf[32];
     
     strncpy(degBuf, val, minStartIdx);
     degBuf[minStartIdx] = '\0';
