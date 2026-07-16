@@ -59,15 +59,11 @@ void CANManager::end() {
 bool CANManager::transmitRaw(uint32_t id, const uint8_t* data, uint8_t dlc) {
     if (!_initialized) return false;
 
-    // Auto-recover from Bus-Off or Stopped state before attempting TX
+    // Check driver state. Fast-fail if NOT in running state.
+    // DO NOT trigger twai_initiate_recovery or twai_start here to prevent high-frequency driver conflicts.
     twai_status_info_t status;
     if (twai_get_status_info(&status) == ESP_OK) {
-        if (status.state == TWAI_STATE_BUS_OFF) {
-            twai_initiate_recovery();
-            return false; // Will be available again after recovery
-        }
-        if (status.state == TWAI_STATE_STOPPED) {
-            twai_start();
+        if (status.state != TWAI_STATE_RUNNING) {
             return false;
         }
     }
@@ -90,15 +86,10 @@ bool CANManager::transmitRaw(uint32_t id, const uint8_t* data, uint8_t dlc) {
 bool CANManager::receiveRaw(uint32_t& id, uint8_t* data, uint8_t& dlc, uint32_t timeoutMs) {
     if (!_initialized) return false;
 
-    // Do not block in receive if bus is in error state
+    // Check driver state. Fast-fail if NOT in running state.
     twai_status_info_t status;
     if (twai_get_status_info(&status) == ESP_OK) {
-        if (status.state == TWAI_STATE_BUS_OFF) {
-            twai_initiate_recovery();
-            return false;
-        }
-        if (status.state == TWAI_STATE_STOPPED) {
-            twai_start();
+        if (status.state != TWAI_STATE_RUNNING) {
             return false;
         }
     }
