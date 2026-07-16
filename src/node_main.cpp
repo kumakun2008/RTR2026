@@ -115,7 +115,7 @@ void setup() {
 
     Serial.println("Initializing SPI & SD Logger...");
     SPI.begin(SPI_SCK_PIN, SPI_MISO_PIN, SPI_MOSI_PIN);
-    if (sdLogger.begin(SD_CS_PIN, SPI, 20000000)) {
+    if (sdLogger.begin(SD_CS_PIN, SPI, 8000000)) { // Reduced from 20MHz to 8MHz for better noise margin
         Serial.print("[OK] SD Logger Mounted. File: ");
         Serial.println(sdLogger.getActiveFilename());
     } else {

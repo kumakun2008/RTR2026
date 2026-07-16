@@ -26,6 +26,7 @@ bool I2CManager::begin() {
         return false;
     }
     _wire.begin(_sdaPin, _sclPin, _speed);
+    _wire.setTimeOut(50); // Set timeout to 50ms to prevent infinite blocking on bus error
 #else
     // For STM32 or other standard Arduino architectures
     _wire.begin();

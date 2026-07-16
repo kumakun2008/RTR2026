@@ -164,12 +164,22 @@ LPS22Sensor::LPS22Sensor(I2CManager& i2c, uint8_t address)
 
 bool LPS22Sensor::begin() {
     uint8_t whoAmI = 0;
-    // WHO_AM_I (0x0F)
-    if (!_i2c.readRegister(_address, 0x0F, &whoAmI, 1)) {
-        return false;
+    bool found = false;
+    
+    // Try original address (usually 0x5C)
+    if (_i2c.readRegister(_address, 0x0F, &whoAmI, 1) && whoAmI == 0xB1) {
+        found = true;
+    } else {
+        // Try alternative address (0x5D if original was 0x5C, and vice versa)
+        uint8_t altAddress = (_address == 0x5C) ? 0x5D : 0x5C;
+        if (_i2c.readRegister(altAddress, 0x0F, &whoAmI, 1) && whoAmI == 0xB1) {
+            _address = altAddress;
+            found = true;
+            Serial.printf("[LPS22] Barometer found at alternative address 0x%02X\n", _address);
+        }
     }
     
-    if (whoAmI != 0xB1) {
+    if (!found) {
         return false;
     }
     
