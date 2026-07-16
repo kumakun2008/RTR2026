@@ -15,11 +15,11 @@
 #define SPI_MISO_PIN 19
 #define SPI_MOSI_PIN 23
 #define SD_CS_PIN    4
-#define CAN_TX_PIN   32
-#define CAN_RX_PIN   33 
+#define CAN_TX_PIN   33
+#define CAN_RX_PIN   32 
 // Note: CAN_STB (MCP2561 pin 8) is hardware-grounded - no software control needed
 
-I2CManager i2cBus(Wire, I2C_SDA_PIN, I2C_SCL_PIN, 400000);
+I2CManager i2cBus(Wire, I2C_SDA_PIN, I2C_SCL_PIN, 100000); // Lowered from 400kHz to 100kHz for longer extension line stability
 SDLogger sdLogger;
 CANManager canBus;
 

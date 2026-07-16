@@ -68,6 +68,9 @@ bool SDLogger::begin(int csPin, SPIClass& spi, uint32_t spiSpeed) {
         _cardMounted = false;
         _fileOpen = false;
         _fileName[0] = '\0';
+        // Explicitly set CS pin to HIGH to release SPI bus
+        pinMode(_csPin, OUTPUT);
+        digitalWrite(_csPin, HIGH);
     }
     
     if (!_cardMounted || !_fileOpen) {

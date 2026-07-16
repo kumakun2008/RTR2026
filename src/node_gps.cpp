@@ -9,14 +9,14 @@
 
 #define I2C_SDA_PIN 21
 #define I2C_SCL_PIN 22
-#define CAN_TX_PIN   32
-#define CAN_RX_PIN   33 
+#define CAN_TX_PIN   33
+#define CAN_RX_PIN   32 
 // Note: CAN_STB (MCP2561 pin 8) is hardware-grounded - no software control needed
 #define GPS_RX_PIN   16
 #define GPS_TX_PIN   17
 #define GPS_PPS_PIN  34
 
-I2CManager i2cBus(Wire, I2C_SDA_PIN, I2C_SCL_PIN, 400000);
+I2CManager i2cBus(Wire, I2C_SDA_PIN, I2C_SCL_PIN, 100000); // Lowered from 400kHz to 100kHz for longer extension line stability
 CANManager canBus;
 TimeSync gpsSync;
 
