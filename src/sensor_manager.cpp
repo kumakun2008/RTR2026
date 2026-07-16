@@ -86,40 +86,48 @@ BM1422Sensor::BM1422Sensor(I2CManager& i2c, uint8_t address)
 
 bool BM1422Sensor::begin() {
     uint8_t whoAmI = 0;
-    // WHO_AM_I (0x0F) in some doc, or chip ID register. Let's read register 0x0F.
-    // BM1422AGMV chip ID is 0x41
+    
+    // Verify device is present
     if (!_i2c.readRegister(_address, 0x0F, &whoAmI, 1)) {
+        Serial.printf("[BM1422] Failed to read WHO_AM_I at 0x%02X\n", _address);
         return false;
     }
     
-    // Put BM1422 in Standby: CNTL1 (0x1B) = 0x00
-    if (!_i2c.writeRegister(_address, 0x1B, 0x00)) {
+    if (whoAmI != 0x41) {
+        Serial.printf("[BM1422] Invalid chip ID 0x%02X at 0x%02X (Expected 0x41)\n", whoAmI, _address);
         return false;
     }
+
+    // 1. CNTL1 (0x1B) = 0xC2 (PC1_ACTIVE | OUT_BIT | RST_LV_LOW | FS1_SINGLE)
+    if (!_i2c.writeRegister(_address, 0x1B, 0xC2)) {
+        return false;
+    }
+    delay(1);
     
-    // Reset Release: Write 0x0000 to CNTL4 (0x5C) (two bytes LSB, MSB)
+    // 2. CNTL4 (0x5C) = 0x00, 0x00
     uint8_t cntl4Data[3] = { 0x5C, 0x00, 0x00 };
     if (!_i2c.writeRaw(_address, cntl4Data, 3)) {
         return false;
     }
+    delay(10); // Wait for reset release to settle
     
-    // Configure CNTL1 (0x1B) for 14-bit continuous mode at 100Hz ODR (0xC4)
-    // PC1 (Active) = 1 (bit 7)
-    // OUT_BIT (14-bit) = 1 (bit 6)
-    // RST_LV (Release) = 0 (bit 5)
-    // ODR (100Hz) = 10 (bits 2:1 -> 0x04)
-    // FS1 (Continuous) = 0 (bit 0)
-    // Result: 0x80 | 0x40 | 0x04 = 0xC4
-    if (!_i2c.writeRegister(_address, 0x1B, 0xC4)) {
+    // 3. CNTL2 (0x1C) = 0x00 (DREN_DISABLE)
+    if (!_i2c.writeRegister(_address, 0x1C, 0x00)) {
         return false;
     }
     
-    // Start Measurement: CNTL3 (0x1D) = 0x40 (Force start or continuous conversion bit)
+    // 4. AVE_A (0x40) = 0x00 (AVE_A_4)
+    if (!_i2c.writeRegister(_address, 0x40, 0x00)) {
+        return false;
+    }
+    
+    // 5. 最初の計測トリガー: CNTL3 (0x1D) = 0x40 (FORCE)
     if (!_i2c.writeRegister(_address, 0x1D, 0x40)) {
         return false;
     }
     
     _initialized = true;
+    Serial.printf("[BM1422] Initialized successfully at I2C address 0x%02X\n", _address);
     return true;
 }
 
@@ -140,6 +148,9 @@ bool BM1422Sensor::read(MagPayload& payload) {
     payload.mag_x = (float)rawX * 0.042f;
     payload.mag_y = (float)rawY * 0.042f;
     payload.mag_z = (float)rawZ * 0.042f;
+    
+    // ★読み出し完了直後に、次回の計測用トリガーをかける
+    _i2c.writeRegister(_address, 0x1D, 0x40);
     
     return true;
 }

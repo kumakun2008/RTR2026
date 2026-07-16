@@ -33,10 +33,13 @@ bool Telemetry::begin(const char* deviceName) {
     g_btSerialPtr = &_serialBT;
     _serialBT.enableSSP();
     _serialBT.onConfirmRequest(BTConfirmRequestCallback);
+    Serial.printf("[Telemetry] Starting Bluetooth SPP with name '%s'...\n", deviceName);
     if (_serialBT.begin(deviceName)) {
         _bluetoothActive = true;
+        Serial.println("[Telemetry] Bluetooth SPP initialized successfully!");
         return true;
     }
+    Serial.println("[Telemetry] Failed to initialize Bluetooth SPP");
     return false;
 }
 
@@ -48,6 +51,17 @@ void Telemetry::sendText(const char* data) {
 
 void Telemetry::process() {
     if (!_bluetoothActive || _otaActive) return;
+    
+    static bool lastConnected = false;
+    bool connected = _serialBT.hasClient();
+    if (connected != lastConnected) {
+        lastConnected = connected;
+        if (connected) {
+            Serial.println("[Telemetry] Bluetooth client connected!");
+        } else {
+            Serial.println("[Telemetry] Bluetooth client disconnected!");
+        }
+    }
     
     // Process pairing confirmation asynchronously outside the GAP callback context to prevent stack crash
     if (g_confirmPending && g_btSerialPtr != nullptr) {

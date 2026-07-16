@@ -66,6 +66,12 @@ bool SDLogger::begin(int csPin, SPIClass& spi, uint32_t spiSpeed) {
         rotateLogFile();
     } else {
         _cardMounted = false;
+        _fileOpen = false;
+        _fileName[0] = '\0';
+    }
+    
+    if (!_cardMounted || !_fileOpen) {
+        return false;
     }
     
     BaseType_t result = xTaskCreatePinnedToCore(
@@ -150,22 +156,33 @@ void SDLogger::triggerSync() {
 }
 
 void SDLogger::rotateLogFile() {
-    if (!_cardMounted) return;
+    if (!_cardMounted) {
+        _fileName[0] = '\0';
+        return;
+    }
     
     int fileIdx = 1;
     for (; fileIdx <= 9999; fileIdx++) {
-        snprintf(_fileName, sizeof(_fileName), "/log_%04d.bin", fileIdx);
+        snprintf(_fileName, sizeof(_fileName), "/log_%04d.log", fileIdx);
         if (!SD.exists(_fileName)) {
             break;
         }
     }
     
-    _logFile = SD.open(_fileName, FILE_WRITE);
-    if (_logFile) {
-        _fileOpen = true;
-    } else {
-        _fileOpen = false;
+    int retry = 0;
+    while (retry < 3) {
+        _logFile = SD.open(_fileName, FILE_WRITE);
+        if (_logFile) {
+            _fileOpen = true;
+            return;
+        }
+        delay(50);
+        retry++;
     }
+    
+    _fileOpen = false;
+    _fileName[0] = '\0';
+    Serial.println("[ERROR] Failed to open log file on SD card!");
 }
 
 void SDLogger::writeTask(void* pvParameters) {
@@ -185,6 +202,14 @@ void SDLogger::handleWrite() {
             _logFile.flush();
         } else {
             _fileOpen = false;
+            Serial.printf("[ERROR] SD write mismatch! Written %u of %u bytes. Log file closed.\n", (unsigned int)written, (unsigned int)_inactiveSize);
+            _logFile.close();
+        }
+    } else {
+        static uint32_t lastWarn = 0;
+        if (millis() - lastWarn > 5000) {
+            Serial.println("[WARNING] SD Card not mounted or file not open. Data is being discarded.");
+            lastWarn = millis();
         }
     }
     

@@ -14,6 +14,7 @@
 // CAN GPIO Pins
 #define CAN_TX_PIN GPIO_NUM_20
 #define CAN_RX_PIN GPIO_NUM_21
+// Note: CAN_STB (MCP2561 pin 8) is hardware-grounded - no software control needed
 
 // CAN IDs (11-bit standard)
 #define LIDAR_CAN_ID      0x100
@@ -25,7 +26,7 @@ volatile uint8_t i2cRegisterPointer = 0x00;
 
 // Shared data variables
 volatile uint16_t lidarDistance_mm = 0;
-volatile uint8_t ultrasoundDistance_cm = 0;
+volatile uint16_t ultrasoundDistance_cm = 0; // uint16_t: max 65535cm (Fix #5: uint8_t overflowed beyond 255cm/2.55m)
 
 void onI2CReceive(int numBytes) {
     if (numBytes > 0) {
@@ -38,14 +39,17 @@ void onI2CReceive(int numBytes) {
 }
 
 void onI2CRequest() {
-    uint8_t buffer[4];
+    // Buffer layout (5 bytes):
+    // [0] lidar_high, [1] lidar_low, [2] us_high, [3] us_low, [4] status
+    uint8_t buffer[5];
     buffer[0] = (lidarDistance_mm >> 8) & 0xFF;
     buffer[1] = lidarDistance_mm & 0xFF;
-    buffer[2] = ultrasoundDistance_cm;
-    buffer[3] = 0xAA; // Normal status flag
+    buffer[2] = (ultrasoundDistance_cm >> 8) & 0xFF; // Fix #5: uint16_t split
+    buffer[3] = ultrasoundDistance_cm & 0xFF;
+    buffer[4] = 0xAA; // Normal status flag
 
-    if (i2cRegisterPointer < 4) {
-        int bytesToSend = 4 - i2cRegisterPointer;
+    if (i2cRegisterPointer < 5) {
+        int bytesToSend = 5 - i2cRegisterPointer;
         Wire.write((const uint8_t*)&buffer[i2cRegisterPointer], bytesToSend);
     } else {
         Wire.write(0x00);
@@ -55,8 +59,8 @@ void onI2CRequest() {
 void initCAN() {
     twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(CAN_TX_PIN, CAN_RX_PIN, TWAI_MODE_NORMAL);
     
-    // Set timing to 1Mbps (Unified with other nodes to prevent bus errors)
-    twai_timing_config_t t_config = TWAI_TIMING_CONFIG_1MBITS();
+    // Set timing to 500kbps (Unified with other nodes to prevent bus errors)
+    twai_timing_config_t t_config = TWAI_TIMING_CONFIG_500KBITS();
     twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
 
     if (twai_driver_install(&g_config, &t_config, &f_config) == ESP_OK) {
@@ -84,7 +88,7 @@ void sendSensorData(uint32_t id, const uint8_t* data, uint8_t dlc) {
         message.data[i] = data[i];
     }
 
-    esp_err_t res = twai_transmit(&message, pdMS_TO_TICKS(0));
+    esp_err_t res = twai_transmit(&message, pdMS_TO_TICKS(10)); // Fix #1: 0ms→10ms timeout to allow TX buffer to drain
     if (res == ESP_OK) {
         Serial.printf("[TX] Sent to ID 0x%03X, DLC: %d\n", id, dlc);
     } else {
@@ -112,6 +116,7 @@ void setup() {
     Serial.println("[OK] I2C Slave initialized at 0x30");
 
     // Initialize CAN (500kbps)
+    // STB pin is hardware-grounded on this PCB, so transceiver is always in Normal mode
     initCAN();
 }
 
@@ -136,6 +141,20 @@ void loop() {
     if (millis() - lastMeasurement >= 500) {
         lastMeasurement = millis();
 
+        // Auto-recover from Bus-Off before transmitting
+        twai_status_info_t twaiStatus;
+        if (twai_get_status_info(&twaiStatus) == ESP_OK) {
+            if (twaiStatus.state == TWAI_STATE_BUS_OFF) {
+                Serial.println("[CAN ERR] Bus-Off detected on altimeter. Recovering...");
+                twai_initiate_recovery();
+                return;
+            }
+            if (twaiStatus.state == TWAI_STATE_STOPPED) {
+                twai_start();
+                return;
+            }
+        }
+
         // URM37v5.0 trigger pulse
         digitalWrite(URM_TRIG_PIN, HIGH);
         delayMicroseconds(10);
@@ -144,7 +163,8 @@ void loop() {
         long duration = pulseIn(URM_ECHO_PIN, HIGH, 30000); // 30ms timeout (approx 5m range)
         if (duration > 0) {
             float urm_mm = duration * 0.17f;
-            ultrasoundDistance_cm = (uint8_t)(urm_mm / 10.0f); // Convert mm to cm
+            uint16_t cm = (uint16_t)(urm_mm / 10.0f); // Fix #5: uint16_t to support up to 500cm (5m)
+            ultrasoundDistance_cm = cm;
         } else {
             ultrasoundDistance_cm = 0; // out of range
         }
@@ -156,9 +176,10 @@ void loop() {
         sendSensorData(LIDAR_CAN_ID, lidarData, 2);
 
         // Broadcast Ultrasonic range via CAN ID 0x101
+        // Fix #5: Send uint16_t as big-endian 2 bytes (matches lidar format)
         uint8_t ultraData[2];
-        ultraData[0] = ultrasoundDistance_cm;
-        ultraData[1] = 0xAA;
+        ultraData[0] = (ultrasoundDistance_cm >> 8) & 0xFF;
+        ultraData[1] = ultrasoundDistance_cm & 0xFF;
         sendSensorData(ULTRASONIC_CAN_ID, ultraData, 2);
 
         // Teleplot Output

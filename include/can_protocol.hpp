@@ -10,7 +10,7 @@
 
 #include <stdint.h>
 
-// CAN IDs (11-bit standard ID / 1Mbps)
+// CAN IDs (11-bit standard ID / 500kbps)
 // [Node 1] Main Board
 constexpr uint32_t CAN_ID_MAIN_ACC_X   = 0x010;
 constexpr uint32_t CAN_ID_MAIN_ACC_Y   = 0x011;
@@ -48,11 +48,15 @@ constexpr uint32_t CAN_ID_PITOT_GYRO_Y  = 0x03C;
 constexpr uint32_t CAN_ID_PITOT_GYRO_Z  = 0x03D;
 constexpr uint32_t CAN_ID_PITOT_MAG_X   = 0x03E;
 constexpr uint32_t CAN_ID_PITOT_MAG_Y   = 0x03F;
+// NOTE (Fix #2): 0x040-0x041 = Main LPS22, 0x050-0x05A = GPS, 0x042-0x04F / 0x05B-0x05F are reserved.
+// CAN_ID_PITOT_MAG_Z skips to 0x060 to avoid collision with the Main/GPS ID blocks above.
 constexpr uint32_t CAN_ID_PITOT_MAG_Z   = 0x060;
 constexpr uint32_t CAN_ID_PITOT_PRESS_RAW_SDP32   = 0x061;
 constexpr uint32_t CAN_ID_PITOT_PRESS_RAW_SDP31_1 = 0x062;
 constexpr uint32_t CAN_ID_PITOT_PRESS_RAW_SDP31_2 = 0x063;
 constexpr uint32_t CAN_ID_PITOT_TEMP_RAW_SDP      = 0x064;
+constexpr uint32_t CAN_ID_PITOT_TEMP_RAW_SDP31_1  = 0x065;
+constexpr uint32_t CAN_ID_PITOT_TEMP_RAW_SDP31_2  = 0x066;
 
 // [Node 1] Main Board - LPS22
 constexpr uint32_t CAN_ID_MAIN_PRESS    = 0x040;

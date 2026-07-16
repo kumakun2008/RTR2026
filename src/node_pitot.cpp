@@ -17,6 +17,7 @@
 #define SD_CS_PIN    4
 #define CAN_TX_PIN   32
 #define CAN_RX_PIN   33 
+// Note: CAN_STB (MCP2561 pin 8) is hardware-grounded - no software control needed
 
 I2CManager i2cBus(Wire, I2C_SDA_PIN, I2C_SCL_PIN, 400000);
 SDLogger sdLogger;
@@ -90,6 +91,8 @@ void setup() {
     if (sdLogger.begin(SD_CS_PIN, SPI, 20000000)) {
         Serial.print("[OK] SD Logger Mounted. File: ");
         Serial.println(sdLogger.getActiveFilename());
+    } else {
+        Serial.println("[ERROR] SD Logger Initialization Failed! (Check card or SPI configuration)");
     }
 
     if (canBus.begin(CAN_TX_PIN, CAN_RX_PIN)) {
@@ -144,7 +147,7 @@ void taskSensorAcquisition(void* pvParameters) {
 
         float airspeed = 0.0f;
         if (ok32 || ok31_1 || ok31_2) {
-            PitotPayload pitotData = { press32, press31_1, press31_2, temp32 };
+            PitotPayload pitotData = { press32, press31_1, press31_2, temp32, temp31_1, temp31_2 };
             sdLogger.logPacket(LOG_ID_PITOT_DATA, &pitotData, sizeof(pitotData), timestamp);
         }
 
@@ -157,10 +160,12 @@ void taskSensorAcquisition(void* pvParameters) {
         if (ok31_1) {
             canBus.transmitScaled(CAN_ID_PITOT_AOA, press31_1, CAN_Scale::PRESSURE);
             canBus.transmitScaled(CAN_ID_PITOT_PRESS_RAW_SDP31_1, press31_1, CAN_Scale::PRESSURE);
+            canBus.transmitScaled(CAN_ID_PITOT_TEMP_RAW_SDP31_1, temp31_1, CAN_Scale::TEMP);
         }
         if (ok31_2) {
             canBus.transmitScaled(CAN_ID_PITOT_AOS, press31_2, CAN_Scale::PRESSURE);
             canBus.transmitScaled(CAN_ID_PITOT_PRESS_RAW_SDP31_2, press31_2, CAN_Scale::PRESSURE);
+            canBus.transmitScaled(CAN_ID_PITOT_TEMP_RAW_SDP31_2, temp31_2, CAN_Scale::TEMP);
         }
 
         if (pitotIMU.readAll(roll, pitch, yaw, accX, accY, accZ, gyroX, gyroY, gyroZ, magX, magY, magZ)) {
@@ -208,6 +213,9 @@ void taskSensorAcquisition(void* pvParameters) {
             Serial.printf(">pitot_magz:%.3f\n", magZ);
             Serial.printf(">pitot_temp:%.2f\n", tempSHT);
             Serial.printf(">pitot_humid:%.2f\n", hum);
+            Serial.printf(">pitot_temp_sdp32:%.2f\n", temp32);
+            Serial.printf(">pitot_temp_sdp31_1:%.2f\n", temp31_1);
+            Serial.printf(">pitot_temp_sdp31_2:%.2f\n", temp31_2);
         }
 
         loopCounter++;

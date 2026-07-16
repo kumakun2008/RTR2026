@@ -10,9 +10,9 @@ def parse_rtr_binary_log(bin_filename, output_dir="extracted_logs"):
         0x01: {"name": "main_imu.csv",     "fmt": "<ffffff",   "cols": ["Timestamp_us", "accel_x", "accel_y", "accel_z", "gyro_x", "gyro_y", "gyro_z"]},
         0x02: {"name": "main_mag.csv",     "fmt": "<fff",      "cols": ["Timestamp_us", "mag_x", "mag_y", "mag_z"]},
         0x03: {"name": "main_baro.csv",    "fmt": "<ff",       "cols": ["Timestamp_us", "pressure", "temperature"]},
-        0x04: {"name": "pitot_data.csv",   "fmt": "<ffff",     "cols": ["Timestamp_us", "diff_press_sdp32", "diff_press_sdp31_1", "diff_press_sdp31_2", "temperature"]},
+        0x04: {"name": "pitot_data.csv",   "fmt": "<ffffff",   "cols": ["Timestamp_us", "diff_press_sdp32", "diff_press_sdp31_1", "diff_press_sdp31_2", "temp_sdp32", "temp_sdp31_1", "temp_sdp31_2"]},
         0x05: {"name": "battery.csv",      "fmt": "<ff",       "cols": ["Timestamp_us", "bus_voltage", "shunt_current"]},
-        0x06: {"name": "gps_um982c.csv",   "fmt": "<ddffBBHf", "cols": ["Timestamp_us", "latitude", "longitude", "altitude", "speed", "sat_count", "fix_status", "heading", "utc"]},
+        0x06: {"name": "gps_um982c.csv",   "fmt": "<ddffBBHff", "cols": ["Timestamp_us", "latitude", "longitude", "altitude", "speed", "sat_count", "fix_status", "heading", "utc", "hdop"]},
         0x07: {"name": "altimeter.csv",    "fmt": "<ff",       "cols": ["Timestamp_us", "ultrasonic_dist", "lidar_dist"]},
         0x08: {"name": "rudder.csv",       "fmt": "<ff",       "cols": ["Timestamp_us", "rudder_angle", "yaw_rate"]},
         0xFF: {"name": "event_mark.csv",   "fmt": "<fff",      "cols": ["Timestamp_us", "calib_offset_sdp32", "calib_offset_sdp31_1", "calib_offset_sdp31_2"]}
@@ -65,7 +65,16 @@ def parse_rtr_binary_log(bin_filename, output_dir="extracted_logs"):
         fh.close()
     print("ログの抽出が完了しました。")
 
+import sys
+
 if __name__ == "__main__":
-    target_bin_file = "log_0020.bin"
+    # 引数があればそれを使用、なければデフォルトで "log_0020.bin" を解析
+    target_bin_file = sys.argv[1] if len(sys.argv) > 1 else "log_0020.bin"
+    
+    if not os.path.exists(target_bin_file):
+        print(f"[エラー] ファイル '{target_bin_file}' が見つかりません。")
+        print("使い方: python Log.py [バイナリログファイル名.bin]")
+        sys.exit(1)
+        
     print(f"{target_bin_file} の解析を開始します...")
     parse_rtr_binary_log(target_bin_file)

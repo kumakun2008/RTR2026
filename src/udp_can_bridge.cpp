@@ -79,8 +79,8 @@ void setup()
   // CAN init
   // rxPin, txPin
   CAN.setPins(33, 32);
-  // 通信速度を新仕様の 1000E3 (1Mbps) に設定
-  if (!CAN.begin(1000E3))
+  // 通信速度を 500E3 (500kbps) に設定
+  if (!CAN.begin(500E3))
   {
     Serial.println("Starting CAN failed!");
   }

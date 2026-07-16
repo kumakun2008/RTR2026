@@ -13,6 +13,8 @@
 // ※ 回路図上は CAN_RX=PA2, CAN_TX=PA3 となっているが、STM32F303K8T6ではそれらのピンにCAN代替機能がないため、
 //    ハードウェアの改修（パターンカットおよび PA2->PA11, PA3->PA12 へのジャンパ配線）を行う前提とし、
 //    コード上は本来のCANピンである PA11 (RX), PA12 (TX) を指定する。
+// BD41041FJ-CE2 STB PIN: STB=LOW で Normal Mode (内部プルアップあり、未接続でスタンバイになる)
+// このPCBではSTBはGNDに直結済みのため、ソフトウェア制御は不要
 #define CAN_RX_PIN   PA11
 #define CAN_TX_PIN   PA12
 

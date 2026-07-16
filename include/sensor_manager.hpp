@@ -49,7 +49,7 @@ protected:
  */
 class ICM42688Sensor : public SensorBase {
 public:
-    ICM42688Sensor(I2CManager& i2c, uint8_t address = 0x68);
+    ICM42688Sensor(I2CManager& i2c, uint8_t address = 0x69);
     bool begin() override;
 
     /**
@@ -66,7 +66,7 @@ public:
  */
 class BM1422Sensor : public SensorBase {
 public:
-    BM1422Sensor(I2CManager& i2c, uint8_t address = 0x0F);
+    BM1422Sensor(I2CManager& i2c, uint8_t address = 0x0E);
     bool begin() override;
 
     /**

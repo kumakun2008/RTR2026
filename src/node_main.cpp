@@ -11,25 +11,23 @@
 #include <WiFi.h>
 #include <ArduinoOTA.h>
 
-#define I2C_SDA_PIN 21
-#define I2C_SCL_PIN 22
+#define I2C_SDA_PIN 22
+#define I2C_SCL_PIN 21
 #define SPI_SCK_PIN  18
 #define SPI_MISO_PIN 19
 #define SPI_MOSI_PIN 23
 #define SD_CS_PIN    4
 #define CAN_TX_PIN   32
 #define CAN_RX_PIN   33 
-#define GPS_RX_PIN   16
-#define GPS_TX_PIN   17
-#define GPS_PPS_PIN  34
+// Note: CAN_STB (MCP2561 pin 8) is hardware-grounded - no software control needed
 #define BATTERY_ADC_PIN 36
 
 I2CManager i2cBus(Wire, I2C_SDA_PIN, I2C_SCL_PIN, 400000);
 SDLogger sdLogger;
 CANManager canBus;
 
-ICM42688Sensor mainIMU(i2cBus, 0x68);
-BM1422Sensor mainMag(i2cBus, 0x0F);
+ICM42688Sensor mainIMU(i2cBus, 0x69);
+BM1422Sensor mainMag(i2cBus, 0x0E);
 LPS22Sensor mainBaro(i2cBus, 0x5C);
 TimeSync timeSync;
 Telemetry telemetry;
@@ -45,6 +43,9 @@ struct DisplayTelemetry {
     float pitotPress31_1 = 0.0f;
     float pitotPress31_2 = 0.0f;
     float pitotTemp32 = 0.0f;
+    float sdpTemp32 = 0.0f;
+    float sdpTemp31_1 = 0.0f;
+    float sdpTemp31_2 = 0.0f;
     float batteryVolt = 0.0f;
     double gpsLat = 0.0;
     double gpsLon = 0.0;
@@ -99,26 +100,58 @@ void setup() {
     delay(1000);
     Serial.println("--- RTR2026 Avionics Initialization ---");
     Serial.println("Running: RTR_Main_Board Configuration");
+    Serial.printf("[INFO] I2C configured: SDA=%d, SCL=%d, Speed=400kHz\n", I2C_SDA_PIN, I2C_SCL_PIN);
+    Serial.printf("[INFO] SPI configured: SCK=%d, MISO=%d, MOSI=%d, CS=%d\n", SPI_SCK_PIN, SPI_MISO_PIN, SPI_MOSI_PIN, SD_CS_PIN);
+    Serial.printf("[INFO] CAN configured: TX=%d, RX=%d\n", CAN_TX_PIN, CAN_RX_PIN);
 
+    Serial.println("Initializing I2C bus...");
     if (i2cBus.begin()) {
         Serial.println("[OK] I2C Manager Active");
+        Serial.println("Forcing I2C bus recovery to clear any power-on locks...");
+        i2cBus.recoverBus();
+    } else {
+        Serial.println("[ERROR] I2C Manager Failed to start!");
     }
 
+    Serial.println("Initializing SPI & SD Logger...");
     SPI.begin(SPI_SCK_PIN, SPI_MISO_PIN, SPI_MOSI_PIN);
     if (sdLogger.begin(SD_CS_PIN, SPI, 20000000)) {
         Serial.print("[OK] SD Logger Mounted. File: ");
         Serial.println(sdLogger.getActiveFilename());
+    } else {
+        Serial.println("[ERROR] SD Logger Initialization Failed! (Check card or SPI configuration)");
     }
 
+    Serial.println("Initializing CAN bus...");
     if (canBus.begin(CAN_TX_PIN, CAN_RX_PIN)) {
         Serial.println("[OK] CAN Bus Driver Active");
+    } else {
+        Serial.println("[ERROR] CAN Bus Driver Failed!");
     }
 
-    mainIMU.begin();
-    mainMag.begin();
-    mainBaro.begin();
+    Serial.println("Initializing Main IMU (ICM42688)...");
+    if (mainIMU.begin()) {
+        Serial.println("[OK] Main IMU (ICM42688) Initialized");
+    } else {
+        Serial.println("[ERROR] Main IMU (ICM42688) Initialization Failed!");
+    }
+
+    Serial.println("Initializing Main Magnetometer (BM1422)...");
+    if (mainMag.begin()) {
+        Serial.println("[OK] Main Magnetometer (BM1422) Initialized");
+    } else {
+        Serial.println("[ERROR] Main Magnetometer (BM1422) Initialization Failed!");
+    }
+
+    Serial.println("Initializing Main Barometer (LPS22)...");
+    if (mainBaro.begin()) {
+        Serial.println("[OK] Main Barometer (LPS22) Initialized");
+    } else {
+        Serial.println("[ERROR] Main Barometer (LPS22) Initialization Failed!");
+    }
+
+    Serial.println("Initializing Battery monitor...");
     battery.begin();
-    timeSync.begin(Serial2, GPS_PPS_PIN, GPS_RX_PIN, GPS_TX_PIN);
     
     telemetry.registerCalibCallback(onCalibZeroCommandTriggered);
     telemetry.registerOTACallback(onOTAModeTriggered);
@@ -158,12 +191,34 @@ void taskSensorAcquisition(void* pvParameters) {
         canBus.transmitScaled(CAN_ID_MAIN_GYRO_X, imuData.gyro_x, CAN_Scale::GYRO);
         canBus.transmitScaled(CAN_ID_MAIN_GYRO_Y, imuData.gyro_y, CAN_Scale::GYRO);
         canBus.transmitScaled(CAN_ID_MAIN_GYRO_Z, imuData.gyro_z, CAN_Scale::GYRO);
+        taskYIELD(); // Fix #3: yield after IMU burst to allow other nodes bus access
 
         mainMag.read(magData);
         sdLogger.logPacket(LOG_ID_MAIN_MAG, &magData, sizeof(magData), timestamp);
         canBus.transmitScaled(CAN_ID_MAIN_MAG_X, magData.mag_x, CAN_Scale::MAG);
         canBus.transmitScaled(CAN_ID_MAIN_MAG_Y, magData.mag_y, CAN_Scale::MAG);
         canBus.transmitScaled(CAN_ID_MAIN_MAG_Z, magData.mag_z, CAN_Scale::MAG);
+        taskYIELD(); // Fix #3: yield after MAG burst
+
+        // Fallback pitch/roll calculation from local IMU if Pitot board is offline (no CAN packet for 2 seconds)
+        if (millis() - lastRxPitot > 2000) {
+            float ax = imuData.accel_x;
+            float ay = imuData.accel_y;
+            float az = imuData.accel_z;
+            float pitch_local = atan2(ay, sqrt(ax * ax + az * az)) * 180.0f / 3.14159265f;
+            float roll_local = atan2(-ax, az) * 180.0f / 3.14159265f;
+            flightData.gyro[0] = -roll_local;
+            flightData.gyro[1] = pitch_local;
+        }
+
+        // Fallback heading calculation from local Magnetometer if GPS board is offline (no CAN packet for 2 seconds)
+        if (millis() - lastRxGPS > 2000) {
+            float mx = magData.mag_x;
+            float my = magData.mag_y;
+            float heading_local = atan2(my, mx) * 180.0f / 3.14159265f;
+            if (heading_local < 0) heading_local += 360.0f;
+            flightData.gpsHeading = (uint16_t)heading_local;
+        }
 
         if (loopCounter % 4 != 0) {
             if (mainBaro.read(baroData)) {
@@ -172,6 +227,7 @@ void taskSensorAcquisition(void* pvParameters) {
                 sdLogger.logPacket(LOG_ID_MAIN_BARO, &baroData, sizeof(baroData), timestamp);
                 canBus.transmitScaled(CAN_ID_MAIN_PRESS, baroData.pressure * 100.0f, CAN_Scale::PRESSURE);
                 canBus.transmitScaled(CAN_ID_MAIN_TEMP, baroData.temperature, CAN_Scale::TEMP);
+                taskYIELD(); // Fix #3: yield after BARO burst
             }
         }
 
@@ -191,7 +247,16 @@ void taskSensorAcquisition(void* pvParameters) {
             Serial.printf(">main_press:%.2f\n", baroData.pressure * 100.0f);
             Serial.printf(">main_temp:%.2f\n", baroData.temperature);
             Serial.printf(">main_bat:%.2f\n", battery.readVoltage());
-            Serial.printf(">gps_speed:%.2f\n", flightData.gpsSpeed);
+            Serial.printf(">main_gps_speed:%.2f\n", flightData.gpsSpeed);
+            Serial.printf(">sdp_temp32:%.2f\n", flightData.sdpTemp32);
+            Serial.printf(">sdp_temp31_1:%.2f\n", flightData.sdpTemp31_1);
+            Serial.printf(">sdp_temp31_2:%.2f\n", flightData.sdpTemp31_2);
+        }
+
+        static uint32_t lastCANStatus = 0;
+        if (millis() - lastCANStatus >= 2000) {
+            lastCANStatus = millis();
+            canBus.printStatus();
         }
 
         loopCounter++;
@@ -263,6 +328,18 @@ void taskCANReceive(void* pvParameters) {
                 flightData.pitotTemp32 = getFloat(rxData, CAN_Scale::TEMP);
                 lastRxPitot = millis();
             }
+            else if (rxId == CAN_ID_PITOT_TEMP_RAW_SDP) {
+                flightData.sdpTemp32 = getFloat(rxData, CAN_Scale::TEMP);
+                lastRxPitot = millis();
+            }
+            else if (rxId == CAN_ID_PITOT_TEMP_RAW_SDP31_1) {
+                flightData.sdpTemp31_1 = getFloat(rxData, CAN_Scale::TEMP);
+                lastRxPitot = millis();
+            }
+            else if (rxId == CAN_ID_PITOT_TEMP_RAW_SDP31_2) {
+                flightData.sdpTemp31_2 = getFloat(rxData, CAN_Scale::TEMP);
+                lastRxPitot = millis();
+            }
             else if (rxId == CAN_ID_RUDDER_ANGLE) {
                 flightData.rudderAngle = getFloat(rxData, CAN_Scale::ANGLE);
                 lastRxRudder = millis();
@@ -274,7 +351,8 @@ void taskCANReceive(void* pvParameters) {
                 lastRxAlt = millis();
             }
             else if (rxId == CAN_ID_ALT_US) {
-                uint8_t rawUS = rxData[0];
+                // Fix #5: decode uint16_t big-endian (matches updated altimeter node)
+                uint16_t rawUS = (uint16_t)((rxData[0] << 8) | rxData[1]);
                 flightData.altUS = (float)rawUS / 100.0f;
                 flightData.has_altUS = true;
                 lastRxAlt = millis();
@@ -342,12 +420,17 @@ void taskCANReceive(void* pvParameters) {
             }
 
             // Central Blackbox SD Logging
-            if (rxId == CAN_ID_PITOT_AIRSPEED || rxId == CAN_ID_PITOT_TEMP) {
+            if (rxId == CAN_ID_PITOT_AIRSPEED || rxId == CAN_ID_PITOT_TEMP || 
+                rxId == CAN_ID_PITOT_TEMP_RAW_SDP || 
+                rxId == CAN_ID_PITOT_TEMP_RAW_SDP31_1 || 
+                rxId == CAN_ID_PITOT_TEMP_RAW_SDP31_2) {
                 PitotPayload pPayload = {
                     flightData.pitotPress32,
                     flightData.pitotPress31_1,
                     flightData.pitotPress31_2,
-                    flightData.pitotTemp32
+                    flightData.sdpTemp32,
+                    flightData.sdpTemp31_1,
+                    flightData.sdpTemp31_2
                 };
                 sdLogger.logPacket(LOG_ID_PITOT_DATA, &pPayload, sizeof(pPayload), timestamp);
             }

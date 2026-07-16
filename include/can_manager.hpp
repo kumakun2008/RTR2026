@@ -16,6 +16,10 @@
 #include "driver/twai.h"
 #endif
 
+#ifdef ARDUINO_ARCH_STM32
+#include <stm32f3xx_hal.h>
+#endif
+
 /**
  * @class CANManager
  * @brief Manages the CAN communication layer. Wraps TWAI on ESP32, and stubs on non-ESP32 platforms.
@@ -27,8 +31,13 @@ public:
 
     /**
      * @brief Initialize and start the CAN driver.
+     * @param txPin  GPIO pin connected to transceiver TXD
+     * @param rxPin  GPIO pin connected to transceiver RXD
+     * @param stbPin GPIO pin connected to transceiver STB (MCP2561 / BD41041).
+     *               Pass -1 (default) if STB is hard-wired to GND on the PCB.
+     *               When provided, the pin is driven LOW to enable Normal mode.
      */
-    bool begin(int txPin, int rxPin);
+    bool begin(int txPin, int rxPin, int stbPin = -1);
 
     /**
      * @brief Stop and uninstall the CAN driver.
@@ -54,9 +63,11 @@ public:
     bool transmitVoiceCmd(uint8_t alertCode);
     bool transmitCalibZero();
     bool transmitOtaStart();
+    void printStatus();
 
 private:
     bool _initialized;
+    int  _stbPin = -1; ///< GPIO for MCP2561/BD41041 STB pin (-1 = not used)
 };
 
 #endif // CAN_MANAGER_HPP

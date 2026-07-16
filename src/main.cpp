@@ -49,7 +49,12 @@
 #define ULTRASONIC_ECHO_PIN 27
 
 // Node-Specific Pin Overrides
-#if defined(NODE_DISPLAY)
+#if defined(NODE_MAIN)
+#undef I2C_SDA_PIN
+#undef I2C_SCL_PIN
+#define I2C_SDA_PIN 22
+#define I2C_SCL_PIN 21
+#elif defined(NODE_DISPLAY)
 #undef CAN_TX_PIN
 #undef CAN_RX_PIN
 #define CAN_TX_PIN 25
@@ -86,7 +91,7 @@
 // ==========================================
 // SYSTEM OBJECTS
 // ==========================================
-I2CManager i2cBus(Wire, I2C_SDA_PIN, I2C_SCL_PIN, 400000);
+I2CManager i2cBus(Wire, I2C_SDA_PIN, I2C_SCL_PIN, 100000);
 SDLogger sdLogger;
 CANManager canBus;
 
@@ -101,6 +106,9 @@ struct DisplayTelemetry {
     float pitotPress31_1 = 0.0f;
     float pitotPress31_2 = 0.0f;
     float pitotTemp32 = 0.0f;
+    float sdpTemp32 = 0.0f;
+    float sdpTemp31_1 = 0.0f;
+    float sdpTemp31_2 = 0.0f;
     float batteryVolt = 0.0f;
     double gpsLat = 0.0;
     double gpsLon = 0.0;
@@ -119,8 +127,8 @@ struct DisplayTelemetry {
 // ==========================================
 
 #if defined(NODE_MAIN)
-ICM42688Sensor mainIMU(i2cBus, 0x68);
-BM1422Sensor mainMag(i2cBus, 0x0F);
+ICM42688Sensor mainIMU(i2cBus, 0x69);
+BM1422Sensor mainMag(i2cBus, 0x0E);
 LPS22Sensor mainBaro(i2cBus, 0x5C);
 TimeSync timeSync;
 Telemetry telemetry;
@@ -260,6 +268,10 @@ void setup() {
     // Initialize I2C Bus
     if (i2cBus.begin()) {
         Serial.println("[OK] I2C Manager Active");
+#if defined(NODE_MAIN)
+        Serial.println("Forcing I2C bus recovery to clear any power-on locks...");
+        i2cBus.recoverBus();
+#endif
     }
 
     // Initialize SPI and SD Logger (Only nodes with SD slots: Main and Pitot)
@@ -268,6 +280,8 @@ void setup() {
     if (sdLogger.begin(SD_CS_PIN, SPI, 20000000)) {
         Serial.print("[OK] SD Logger Mounted. File: ");
         Serial.println(sdLogger.getActiveFilename());
+    } else {
+        Serial.println("[ERROR] SD Logger Initialization Failed! (Check card or SPI configuration)");
     }
 #endif
 
@@ -279,11 +293,33 @@ void setup() {
     // Initialize Hardware & FreeRTOS Tasks for each node
 #if defined(NODE_MAIN)
     Serial.println("Running: RTR_Main_Board Configuration");
-    mainIMU.begin();
-    mainMag.begin();
-    mainBaro.begin();
+    Serial.printf("[INFO] I2C configured: SDA=%d, SCL=%d, Speed=400kHz\n", I2C_SDA_PIN, I2C_SCL_PIN);
+    Serial.printf("[INFO] SPI configured: SCK=%d, MISO=%d, MOSI=%d, CS=%d\n", SPI_SCK_PIN, SPI_MISO_PIN, SPI_MOSI_PIN, SD_CS_PIN);
+    Serial.printf("[INFO] CAN configured: TX=%d, RX=%d\n", CAN_TX_PIN, CAN_RX_PIN);
+
+    Serial.println("Initializing Main IMU (ICM42688)...");
+    if (mainIMU.begin()) {
+        Serial.println("[OK] Main IMU (ICM42688) Initialized");
+    } else {
+        Serial.println("[ERROR] Main IMU (ICM42688) Initialization Failed!");
+    }
+
+    Serial.println("Initializing Main Magnetometer (BM1422)...");
+    if (mainMag.begin()) {
+        Serial.println("[OK] Main Magnetometer (BM1422) Initialized");
+    } else {
+        Serial.println("[ERROR] Main Magnetometer (BM1422) Initialization Failed!");
+    }
+
+    Serial.println("Initializing Main Barometer (LPS22)...");
+    if (mainBaro.begin()) {
+        Serial.println("[OK] Main Barometer (LPS22) Initialized");
+    } else {
+        Serial.println("[ERROR] Main Barometer (LPS22) Initialization Failed!");
+    }
+
+    Serial.println("Initializing Battery monitor...");
     battery.begin();
-    timeSync.begin(Serial2, GPS_PPS_PIN, GPS_RX_PIN, GPS_TX_PIN);
     
     telemetry.registerCalibCallback(onCalibZeroCommandTriggered);
     telemetry.registerOTACallback(onOTAModeTriggered);
@@ -451,7 +487,7 @@ void taskSensorAcquisition(void* pvParameters) {
         }
 
         if (ok32 && ok31_1 && ok31_2) {
-            PitotPayload pitotData = { press32, press31_1, press31_2, temp32 };
+            PitotPayload pitotData = { press32, press31_1, press31_2, temp32, temp31_1, temp31_2 };
             sdLogger.logPacket(LOG_ID_PITOT_DATA, &pitotData, sizeof(pitotData), timestamp);
             
             // Broadcast dynamic pressure and calculated airspeed on CAN
@@ -555,7 +591,9 @@ void taskCANReceive(void* pvParameters) {
                     flightData.pitotPress32,
                     flightData.pitotPress31_1,
                     flightData.pitotPress31_2,
-                    flightData.pitotTemp32
+                    flightData.sdpTemp32,
+                    flightData.sdpTemp31_1,
+                    flightData.sdpTemp31_2
                 };
                 sdLogger.logPacket(LOG_ID_PITOT_DATA, &pPayload, sizeof(pPayload), timestamp);
             }

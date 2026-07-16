@@ -11,6 +11,7 @@
 #define I2C_SCL_PIN 22
 #define CAN_TX_PIN   32
 #define CAN_RX_PIN   33 
+// Note: CAN_STB (MCP2561 pin 8) is hardware-grounded - no software control needed
 #define GPS_RX_PIN   16
 #define GPS_TX_PIN   17
 #define GPS_PPS_PIN  34

@@ -67,13 +67,15 @@ struct BaroPayload {
 
 /**
  * @brief Differential Pressure / Pitot Payload (SDP31/SDP32)
- * Size: 16 bytes
+ * Size: 24 bytes
  */
 struct PitotPayload {
     float diff_press_sdp32;   ///< Primary pitot dynamic pressure (Pa)
     float diff_press_sdp31_1; ///< Backup 1 dynamic pressure (Pa)
     float diff_press_sdp31_2; ///< Backup 2 dynamic pressure (Pa)
-    float temperature;        ///< Ambient temperature (C)
+    float temp_sdp32;         ///< Temperature from SDP32 (C)
+    float temp_sdp31_1;       ///< Temperature from SDP31-1 (C)
+    float temp_sdp31_2;       ///< Temperature from SDP31-2 (C)
 };
 
 /**
