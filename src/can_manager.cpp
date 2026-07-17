@@ -32,7 +32,8 @@ bool CANManager::begin(int txPin, int rxPin, int stbPin) {
     g_config.tx_queue_len = 15;
     g_config.rx_queue_len = 30;
     
-    twai_timing_config_t t_config = TWAI_TIMING_CONFIG_500KBITS();
+    // 1Mbps - confirmed working baud rate (ref: message.txt altimeter test code)
+    twai_timing_config_t t_config = TWAI_TIMING_CONFIG_1MBITS();
     twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
     
     if (twai_driver_install(&g_config, &t_config, &f_config) != ESP_OK) {
@@ -170,15 +171,15 @@ bool CANManager::begin(int txPin, int rxPin, int stbPin) {
     GPIO_InitStruct.Alternate = GPIO_AF9_CAN; // AF9 is CAN on STM32F303
     HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-    // Initialize CAN settings (500 kbps)
+    // Initialize CAN settings (1 Mbps) - matches ESP32 nodes and confirmed working altimeter code
     // APB1 clock is usually 36 MHz on F303 at 72MHz.
-    // For 500kbps: Prescaler = 4, tq = Prescaler / APB1 = 4 / 36MHz = 1/9 us.
+    // For 1Mbps: Prescaler = 2, tq = Prescaler / APB1 = 2 / 36MHz = 1/18 us.
     // TimeSeg1 = 12, TimeSeg2 = 5, SyncJumpWidth = 1.
     // Total tq = 1 + 12 + 5 = 18 tq.
-    // Time for 1 bit = 18 tq = 18 * (1/9 us) = 2 us.
-    // Bitrate = 1 / 2 us = 500 kbps.
+    // Time for 1 bit = 18 tq = 18 * (1/18 us) = 1 us.
+    // Bitrate = 1 / 1 us = 1 Mbps.
     hcan1.Instance = CAN1;
-    hcan1.Init.Prescaler = 4;
+    hcan1.Init.Prescaler = 2;  // Changed from 4 (500kbps) to 2 (1Mbps)
     hcan1.Init.Mode = CAN_MODE_NORMAL;
     hcan1.Init.SyncJumpWidth = CAN_SJW_1TQ;
     hcan1.Init.TimeTriggeredMode = DISABLE;

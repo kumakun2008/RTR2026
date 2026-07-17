@@ -10,7 +10,7 @@
 
 #include <stdint.h>
 
-// CAN IDs (11-bit standard ID / 500kbps)
+// CAN IDs (11-bit standard ID / 1Mbps - all nodes unified)
 // [Node 1] Main Board
 constexpr uint32_t CAN_ID_MAIN_ACC_X   = 0x010;
 constexpr uint32_t CAN_ID_MAIN_ACC_Y   = 0x011;

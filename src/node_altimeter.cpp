@@ -59,8 +59,8 @@ void onI2CRequest() {
 void initCAN() {
     twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(CAN_TX_PIN, CAN_RX_PIN, TWAI_MODE_NORMAL);
     
-    // Set timing to 500kbps (Unified with other nodes to prevent bus errors)
-    twai_timing_config_t t_config = TWAI_TIMING_CONFIG_500KBITS();
+    // 1Mbps - confirmed working baud rate (ref: message.txt altimeter test code)
+    twai_timing_config_t t_config = TWAI_TIMING_CONFIG_1MBITS();
     twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
 
     if (twai_driver_install(&g_config, &t_config, &f_config) == ESP_OK) {
@@ -88,7 +88,7 @@ void sendSensorData(uint32_t id, const uint8_t* data, uint8_t dlc) {
         message.data[i] = data[i];
     }
 
-    esp_err_t res = twai_transmit(&message, pdMS_TO_TICKS(10)); // Fix #1: 0ms→10ms timeout to allow TX buffer to drain
+    esp_err_t res = twai_transmit(&message, pdMS_TO_TICKS(0)); // Non-blocking: matches confirmed working code (message.txt)
     if (res == ESP_OK) {
         Serial.printf("[TX] Sent to ID 0x%03X, DLC: %d\n", id, dlc);
     } else {
@@ -140,20 +140,6 @@ void loop() {
     static uint32_t lastMeasurement = 0;
     if (millis() - lastMeasurement >= 500) {
         lastMeasurement = millis();
-
-        // Auto-recover from Bus-Off before transmitting
-        twai_status_info_t twaiStatus;
-        if (twai_get_status_info(&twaiStatus) == ESP_OK) {
-            if (twaiStatus.state == TWAI_STATE_BUS_OFF) {
-                Serial.println("[CAN ERR] Bus-Off detected on altimeter. Recovering...");
-                twai_initiate_recovery();
-                return;
-            }
-            if (twaiStatus.state == TWAI_STATE_STOPPED) {
-                twai_start();
-                return;
-            }
-        }
 
         // URM37v5.0 trigger pulse
         digitalWrite(URM_TRIG_PIN, HIGH);

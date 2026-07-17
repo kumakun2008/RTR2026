@@ -230,13 +230,23 @@ void taskCANReceive(void* pvParameters) {
             }
         }
 
+        // タイムアウト20msでCAN受信を監視
         if (canBus.receiveRaw(rxId, rxData, rxDlc, 20)) {
+            
+            // =================【デバッグ用：受信した生データをすべて出力】=================
+            Serial.printf("[CAN DEBUG] RX ID: 0x%03X | DLC: %d | Data: ", rxId, rxDlc);
+            for (int i = 0; i < rxDlc; i++) {
+                Serial.printf("%02X ", rxData[i]);
+            }
+            Serial.println();
+            // =======================================================================
+
             if (rxId == CAN_ID_OTA_START) {
                 isOtaMode = true;
                 continue;
             }
             
-            // Update node communication status timestamps
+            // 各ノードの受信タイムスタンプ更新
             if ((rxId >= 0x010 && rxId <= 0x018) || rxId == CAN_ID_BATTERY_VOLT || rxId == CAN_ID_MAIN_PRESS || rxId == CAN_ID_MAIN_TEMP) {
                 lastRxMain = millis();
             }
@@ -284,14 +294,16 @@ void taskCANReceive(void* pvParameters) {
                 flightData.rudderAngle = getFloat(rxData, CAN_Scale::ANGLE);
                 flightData.has_rudderAngle = true;
             }
-            else if (rxId == CAN_ID_ALT_LIDAR) {
+            // 高度計受信: 0x100=Lidar(Big-Endian 16bit mm), 0x101=超音波(Big-Endian 16bit cm)
+            else if (rxId == CAN_ID_ALT_LIDAR) { 
                 uint16_t rawLidar = (uint16_t)((rxData[0] << 8) | rxData[1]);
-                flightData.altLidar = (float)rawLidar / 1000.0f;
+                flightData.altLidar = (float)rawLidar / 1000.0f; // mm -> m
                 flightData.has_altLidar = true;
             }
             else if (rxId == CAN_ID_ALT_US) {
-                uint8_t rawUS = rxData[0];
-                flightData.altUS = (float)rawUS / 100.0f;
+                // Big-Endian 16bit cm (matches updated altimeter node_altimeter.cpp)
+                uint16_t rawUS = (uint16_t)((rxData[0] << 8) | rxData[1]);
+                flightData.altUS = (float)rawUS / 100.0f; // cm -> m
                 flightData.has_altUS = true;
             }
             else if (rxId == CAN_ID_GPS_LAT_UPPER) {
@@ -516,26 +528,18 @@ void taskUIDraw(void* pvParameters) {
                 tft.fillCircle((int)constrain(old_mx, 8.0f, 102.0f), (int)constrain(old_my, 128.0f, 217.0f), 2, ILI9341_BLACK);
             }
 
-            // Redraw Shoreline/Rivers (Fast and prevents erase artifacts)
+            // Redraw Shoreline/Rivers
             if (!useArakawaMap) {
-                // Matsubara Beach Shoreline (Green)
                 tft.drawLine(10, 190, 95, 135, ILI9341_GREEN);
-                // Launch Platform (Yellow)
                 tft.drawLine(50, 162, 35, 147, ILI9341_YELLOW);
-                
-                // Labels
                 tft.setTextSize(1);
                 tft.setTextColor(ILI9341_BLUE, ILI9341_BLACK);
                 tft.setCursor(10, 203); tft.print("BIWA LAKE");
                 tft.setTextColor(ILI9341_GREEN, ILI9341_BLACK);
                 tft.setCursor(10, 131); tft.print("MATSUBARA");
             } else {
-                // Sumida River (Blue)
                 tft.drawLine(10, 135, 95, 190, ILI9341_BLUE);
-                // TMCIT Campus boundary (Green)
                 tft.drawRect(50, 155, 16, 16, ILI9341_GREEN);
-                
-                // Labels
                 tft.setTextSize(1);
                 tft.setTextColor(ILI9341_WHITE, ILI9341_BLACK);
                 tft.setCursor(10, 203); tft.print("ARAKAWA");

@@ -17,8 +17,8 @@
 #define SPI_MISO_PIN 19
 #define SPI_MOSI_PIN 23
 #define SD_CS_PIN    4
-#define CAN_TX_PIN   33
-#define CAN_RX_PIN   32 
+#define CAN_TX_PIN   32
+#define CAN_RX_PIN   33 
 // Note: CAN_STB (MCP2561 pin 8) is hardware-grounded - no software control needed
 #define BATTERY_ADC_PIN 36
 
