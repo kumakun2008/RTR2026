@@ -81,11 +81,7 @@ void initCAN() {
 }
 
 void sendSensorData(uint32_t id, const uint8_t* data, uint8_t dlc) {
-    if (canBus.transmitRaw(id, data, dlc)) {
-        Serial.printf("[TX] Sent to ID 0x%03X, DLC: %d\n", id, dlc);
-    } else {
-        Serial.printf("[TX ERR] Failed to send to ID 0x%03X\n", id);
-    }
+    canBus.transmitRaw(id, data, dlc);
 }
 
 void setup() {
@@ -200,10 +196,6 @@ void loop() {
     if (millis() - lastHBalt >= 1000) {
         lastHBalt = millis();
         uint8_t hbPayload = NODE_ID_ALT;
-        if (canBus.transmitRaw(CAN_ID_HB_ALT, &hbPayload, 1)) {
-            Serial.println("[HB] Altimeter node alive");
-        } else {
-            Serial.println("[HB ERR] Altimeter heartbeat failed");
-        }
+        canBus.transmitRaw(CAN_ID_HB_ALT, &hbPayload, 1);
     }
 }

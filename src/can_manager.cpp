@@ -145,10 +145,8 @@ void CANManager::handleAutoRecovery() {
     twai_status_info_t status_info;
     if (twai_get_status_info(&status_info) == ESP_OK) {
         if (status_info.state == TWAI_STATE_BUS_OFF) {
-            Serial.println("[CAN Warning] Bus-Off detected via auto-recovery! Recovering...");
             twai_initiate_recovery();
         } else if (status_info.state == TWAI_STATE_STOPPED) {
-            Serial.println("[CAN Warning] Stopped detected via auto-recovery! Restarting...");
             twai_start();
         }
     }
