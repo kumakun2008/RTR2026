@@ -57,6 +57,8 @@ struct DisplayTelemetry {
     uint8_t gpsSats = 0;
     uint8_t gpsFix = 0;
     uint16_t gpsHeading = 0;
+    float mainHeading = 0.0f;
+    float pitotHeading = 0.0f;
     float altLidar = 0.0f;
     float altUS = 0.0f;
     float rudderAngle = 0.0f;
@@ -72,6 +74,9 @@ struct DisplayTelemetry {
     bool has_elevatorAtt = false;
     bool has_gpsPos = false;
     bool has_gpsAlt = false;
+    bool has_gpsHeading = false;
+    bool has_mainHeading = false;
+    bool has_pitotHeading = false;
 } flightData;
 
 struct PrevDrawData {
@@ -84,6 +89,10 @@ struct PrevDrawData {
     double gpsLon = 0.0;
     bool has_gpsPos = false;
     bool useArakawaMap = false;
+    const char* prev_asi_src = "";
+    const char* prev_att_src = "";
+    const char* prev_alt_src = "";
+    const char* prev_hdg_src = "";
 } prevDraw;
 
 volatile bool useArakawaMap = false;
@@ -353,6 +362,13 @@ void taskCANReceive(void* pvParameters) {
             }
             else if (rxId == CAN_ID_MAIN_MAG_Z) {
                 flightData.mag[2] = getFloat(rxData, CAN_Scale::MAG);
+                // Calculate main heading from magnetometer
+                float mx = flightData.mag[0];
+                float my = flightData.mag[1];
+                float hdg = atan2f(-my, mx) * RAD_TO_DEG;
+                if (hdg < 0.0f) hdg += 360.0f;
+                flightData.mainHeading = hdg;
+                flightData.has_mainHeading = true;
             }
             // ---- Pitot Attitude (0x033-0x034) overrides main IMU attitude ----
             else if (rxId == CAN_ID_PITOT_AIRSPEED) {
@@ -372,6 +388,12 @@ void taskCANReceive(void* pvParameters) {
             else if (rxId == CAN_ID_PITOT_ROLL) {
                 flightData.pitotRoll = getFloat(rxData, CAN_Scale::ANGLE);
                 flightData.has_pitotAtt = true;
+            }
+            else if (rxId == CAN_ID_PITOT_YAW) {
+                float yaw = getFloat(rxData, CAN_Scale::ANGLE);
+                if (yaw < 0.0f) yaw += 360.0f;
+                flightData.pitotHeading = yaw;
+                flightData.has_pitotHeading = true;
             }
             else if (rxId == CAN_ID_RUDDER_ANGLE) {
                 flightData.rudderAngle = getFloat(rxData, CAN_Scale::ANGLE);
@@ -430,6 +452,7 @@ void taskCANReceive(void* pvParameters) {
             }
             else if (rxId == CAN_ID_GPS_AZIMUTH) {
                 flightData.gpsHeading = (uint16_t)(getFloat(rxData, CAN_Scale::GPS_AZIMUTH));
+                flightData.has_gpsHeading = true;
             }
             else if (rxId == CAN_ID_BATTERY_VOLT) {
                 flightData.batteryVolt = getFloat(rxData, CAN_Scale::BATTERY);
@@ -480,35 +503,72 @@ void taskUIDraw(void* pvParameters) {
             }
         }
 
-        // Determine current flight parameters
+        // Determine current flight parameters and source names
         float current_speed = flightData.has_pitotPress32 ? flightData.pitotPress32 : 0.0f;
+        const char* asi_src = (flightData.has_pitotPress32 && (millis() - lastRxPitot < 3000)) ? "PITOT" : "NONE";
 
         // ATT: メインIMUが優先, 無ければピトーノードの傾斜角を使用
         float current_pitch, current_roll;
-        if (flightData.has_mainIMU) {
+        const char* att_src = "NONE";
+        bool main_att_valid = flightData.has_mainIMU && (millis() - lastRxMain < 3000);
+        bool pitot_att_valid = flightData.has_pitotAtt && (millis() - lastRxPitot < 3000);
+
+        if (main_att_valid) {
             current_pitch = flightData.mainPitch;
             current_roll  = flightData.mainRoll;
-        } else if (flightData.has_pitotAtt) {
+            att_src = "MAIN";
+        } else if (pitot_att_valid) {
             current_pitch = flightData.pitotPitch;
             current_roll  = flightData.pitotRoll;
+            att_src = "PITOT";
         } else {
             current_pitch = 0.0f;
             current_roll  = 0.0f;
+            att_src = "NONE";
         }
-        bool has_att = flightData.has_mainIMU || flightData.has_pitotAtt;
+        bool has_att = main_att_valid || pitot_att_valid;
 
         // ALT: LiDAR > 超音波 > 気圧高度 の順で優先
         float current_alt;
-        if (flightData.has_altLidar) {
+        const char* alt_src = "NONE";
+        bool lidar_valid = flightData.has_altLidar && (millis() - lastRxAlt < 3000);
+        bool us_valid = flightData.has_altUS && (millis() - lastRxAlt < 3000);
+        bool baro_valid = flightData.has_baroAlt && (millis() - lastRxMain < 3000);
+
+        if (lidar_valid) {
             current_alt = flightData.altLidar;
-        } else if (flightData.has_altUS) {
+            alt_src = "LIDAR";
+        } else if (us_valid) {
             current_alt = flightData.altUS;
-        } else if (flightData.has_baroAlt) {
+            alt_src = "U-SONIC";
+        } else if (baro_valid) {
             current_alt = flightData.baroAlt;
+            alt_src = "BARO";
         } else {
             current_alt = 0.0f;
+            alt_src = "NONE";
         }
-        uint16_t current_hdg = flightData.gpsHeading % 360;
+
+        // HDG: GPS優先 -> メイン磁気方位 -> ピトー方位 の順で優先
+        uint16_t current_hdg = 0;
+        const char* hdg_src = "NONE";
+        bool gps_hdg_valid = flightData.has_gpsHeading && (millis() - lastRxGPS < 3000);
+        bool main_hdg_valid = flightData.has_mainHeading && (millis() - lastRxMain < 3000);
+        bool pitot_hdg_valid = flightData.has_pitotHeading && (millis() - lastRxPitot < 3000);
+
+        if (gps_hdg_valid) {
+            current_hdg = flightData.gpsHeading % 360;
+            hdg_src = "GPS";
+        } else if (main_hdg_valid) {
+            current_hdg = (uint16_t)flightData.mainHeading % 360;
+            hdg_src = "MAIN";
+        } else if (pitot_hdg_valid) {
+            current_hdg = (uint16_t)flightData.pitotHeading % 360;
+            hdg_src = "PITOT";
+        } else {
+            current_hdg = 0;
+            hdg_src = "NONE";
+        }
 
         // --- 0. Top Telemetry Status Strip ---
         tft.setTextSize(1);
@@ -617,6 +677,61 @@ void taskUIDraw(void* pvParameters) {
             tft.setTextColor(ILI9341_CYAN, ILI9341_BLACK);
             tft.setCursor(150, 175);
             tft.printf("%3d", current_hdg);
+        }
+
+        // --- Source Text Drawing (Draw if source changed) ---
+        tft.setTextSize(1);
+        
+        // ASI Source
+        if (strcmp(asi_src, prevDraw.prev_asi_src) != 0) {
+            tft.fillRect(35, 90, 36, 8, ILI9341_BLACK);
+            tft.setCursor(35, 90);
+            if (strcmp(asi_src, "NONE") == 0) {
+                tft.setTextColor(ILI9341_RED, ILI9341_BLACK);
+            } else {
+                tft.setTextColor(ILI9341_YELLOW, ILI9341_BLACK);
+            }
+            tft.print(asi_src);
+            prevDraw.prev_asi_src = asi_src;
+        }
+
+        // ATT Source
+        if (strcmp(att_src, prevDraw.prev_att_src) != 0) {
+            tft.fillRect(145, 92, 30, 8, ILI9341_BLACK);
+            tft.setCursor(145, 92);
+            if (strcmp(att_src, "NONE") == 0) {
+                tft.setTextColor(ILI9341_RED, ILI9341_BLACK);
+            } else {
+                tft.setTextColor(ILI9341_YELLOW, ILI9341_BLACK);
+            }
+            tft.print(att_src);
+            prevDraw.prev_att_src = att_src;
+        }
+
+        // ALT Source
+        if (strcmp(alt_src, prevDraw.prev_alt_src) != 0) {
+            tft.fillRect(240, 90, 48, 8, ILI9341_BLACK);
+            tft.setCursor(240, 90);
+            if (strcmp(alt_src, "NONE") == 0) {
+                tft.setTextColor(ILI9341_RED, ILI9341_BLACK);
+            } else {
+                tft.setTextColor(ILI9341_YELLOW, ILI9341_BLACK);
+            }
+            tft.print(alt_src);
+            prevDraw.prev_alt_src = alt_src;
+        }
+
+        // HDG Source
+        if (strcmp(hdg_src, prevDraw.prev_hdg_src) != 0) {
+            tft.fillRect(142, 192, 36, 8, ILI9341_BLACK);
+            tft.setCursor(142, 192);
+            if (strcmp(hdg_src, "NONE") == 0) {
+                tft.setTextColor(ILI9341_RED, ILI9341_BLACK);
+            } else {
+                tft.setTextColor(ILI9341_YELLOW, ILI9341_BLACK);
+            }
+            tft.print(hdg_src);
+            prevDraw.prev_hdg_src = hdg_src;
         }
 
         // --- 5. Bottom-Left GPS Vector Map Grid ---

@@ -156,7 +156,7 @@ void taskSensorAcquisition(void* pvParameters) {
             canBus.transmitDoubleSplit(CAN_ID_GPS_LON_UPPER, CAN_ID_GPS_LON_LOWER, gpsData.longitude);
             canBus.transmitScaled(CAN_ID_GPS_ALT,     gpsData.altitude,         CAN_Scale::GPS_ALT);
             canBus.transmitScaled(CAN_ID_GPS_SPEED,   gpsData.speed,            CAN_Scale::GPS_SPEED);
-            canBus.transmitScaled(CAN_ID_GPS_AZIMUTH, (float)gpsData.heading,   CAN_Scale::GPS_AZIMUTH);
+            canBus.transmitScaled(CAN_ID_GPS_AZIMUTH, (float)gpsData.heading / 100.0f,   CAN_Scale::GPS_AZIMUTH);
         } else {
             canBus.transmitDoubleSplit(CAN_ID_GPS_LAT_UPPER, CAN_ID_GPS_LAT_LOWER, 0.0);
             canBus.transmitDoubleSplit(CAN_ID_GPS_LON_UPPER, CAN_ID_GPS_LON_LOWER, 0.0);
