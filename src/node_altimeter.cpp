@@ -9,7 +9,7 @@
 #define OFFSET_CORRECTION 0  // 補正値
 
 // URM37v5.0 Ultrasonic Sensor
-#define URM_ECHO_PIN 3  // 基板上のD0 (GPIO2)
+#define URM_ECHO_PIN 3  // 基板上のD1 (GPIO3)
 #define URM_TRIG_PIN 4  // 基板上のD2 (GPIO4) (Corrected based on altimeter.txt)
 
 // CAN GPIO Pins
