@@ -28,8 +28,6 @@ bool CANManager::begin(int txPin, int rxPin, int stbPin) {
         (gpio_num_t)rxPin, 
         TWAI_MODE_NORMAL
     );
-    // クロックソースを外部水晶(40MHz)に固定し、ESP32-C3のクロック分周誤差によるボーレートのズレを解消
-    g_config.clk_src = TWAI_CLK_SRC_XTAL;
     // Larger queues to handle bursts from all nodes simultaneously
     g_config.tx_queue_len = 15;
     g_config.rx_queue_len = 30;
