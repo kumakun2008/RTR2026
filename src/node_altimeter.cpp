@@ -172,6 +172,19 @@ void loop() {
         ultraData[1] = ultrasoundDistance_cm & 0xFF;
         sendSensorData(ULTRASONIC_CAN_ID, ultraData, 2);
 
+        // Debug outputs when values are read
+        if (lidarDistance_mm > 0) {
+            Serial.printf("[Sensor Data] Lidar: %u mm\n", lidarDistance_mm);
+        } else {
+            Serial.println("[Sensor Warn] Lidar: 0 mm (No reading)");
+        }
+
+        if (duration > 0 && duration < 30000) {
+            Serial.printf("[Sensor Data] Ultrasonic: %u cm (pulse duration: %ld us)\n", ultrasoundDistance_cm, duration);
+        } else {
+            Serial.printf("[Sensor Warn] Ultrasonic: No pulse (duration: %ld us)\n", duration);
+        }
+
         // Teleplot Output
         Serial.printf(">alt_lidar:%d\n", lidarDistance_mm);
         Serial.printf(">alt_ultrasonic:%d\n", ultrasoundDistance_cm);
