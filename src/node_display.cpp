@@ -410,14 +410,22 @@ void taskCANReceive(void* pvParameters) {
             // 高度計受信: 0x100=Lidar(Big-Endian 16bit mm), 0x101=超音波(Big-Endian 16bit cm)
             else if (rxId == CAN_ID_ALT_LIDAR) { 
                 uint16_t rawLidar = (uint16_t)((rxData[0] << 8) | rxData[1]);
-                flightData.altLidar = (float)rawLidar / 1000.0f; // mm -> m
-                flightData.has_altLidar = true;
+                if (rawLidar == 65535) {
+                    flightData.has_altLidar = false;
+                } else {
+                    flightData.altLidar = (float)rawLidar / 1000.0f; // mm -> m
+                    flightData.has_altLidar = true;
+                }
             }
             else if (rxId == CAN_ID_ALT_US) {
                 // Big-Endian 16bit cm (matches updated altimeter node_altimeter.cpp)
                 uint16_t rawUS = (uint16_t)((rxData[0] << 8) | rxData[1]);
-                flightData.altUS = (float)rawUS / 100.0f; // cm -> m
-                flightData.has_altUS = true;
+                if (rawUS == 65535) {
+                    flightData.has_altUS = false;
+                } else {
+                    flightData.altUS = (float)rawUS / 100.0f; // cm -> m
+                    flightData.has_altUS = true;
+                }
             }
             else if (rxId == CAN_ID_GPS_LAT_UPPER) {
                 uint32_t upper;

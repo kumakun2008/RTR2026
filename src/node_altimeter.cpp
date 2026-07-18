@@ -25,8 +25,8 @@
 volatile uint8_t i2cRegisterPointer = 0x00;
 
 // Shared data variables
-volatile uint16_t lidarDistance_mm = 0;
-volatile uint16_t ultrasoundDistance_cm = 0; // uint16_t: max 65535cm
+volatile uint16_t lidarDistance_mm = 65535;
+volatile uint16_t ultrasoundDistance_cm = 65535; // uint16_t: max 65535cm
 
 // CAN Manager Instance
 CANManager canBus;
@@ -115,6 +115,7 @@ void setup() {
 
 void loop() {
     // 1. Read and parse Serial stream from TSD20 Lidar (Robust parser, From altimeter.txt)
+    bool lidarFresh = false;
     while (Serial1.available() > 0) {
         uint8_t inByte = Serial1.read();
         
@@ -136,10 +137,22 @@ void loop() {
                     if (rawDistance != 50000) {
                         int correctedDistance = (int)rawDistance + OFFSET_CORRECTION;
                         lidarDistance_mm = (correctedDistance < 0) ? 0 : (uint16_t)correctedDistance;
+                        lidarFresh = true;
+                    } else {
+                        lidarDistance_mm = 65535; // out-of-range
                     }
                 }
             }
         }
+    }
+
+    // Keep track of Lidar packet timeout. If no packet for 2 seconds, mark as invalid.
+    static uint32_t lastLidarRxTime = 0;
+    if (lidarFresh) {
+        lastLidarRxTime = millis();
+    }
+    if (millis() - lastLidarRxTime > 2000) {
+        lidarDistance_mm = 65535;
     }
 
     // 2. Measure Ultrasonic distance and broadcast both metrics (500ms cycle)
@@ -158,7 +171,7 @@ void loop() {
             uint16_t cm = (uint16_t)(urm_mm / 10.0f);
             ultrasoundDistance_cm = cm;
         } else {
-            ultrasoundDistance_cm = 0; // out of range
+            ultrasoundDistance_cm = 65535; // out of range -> 65535
         }
 
         // Broadcast Lidar range via CAN ID 0x100
