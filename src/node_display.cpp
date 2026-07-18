@@ -537,8 +537,12 @@ void taskUIDraw(void* pvParameters) {
         bool has_att = main_att_valid || pitot_att_valid;
 
         // ALT: 超音波 > LiDAR > 気圧高度 の順で優先
+        // (有効値以外になった場合、直前の対地高度を維持して表示し続ける)
         float current_alt;
         const char* alt_src = "NONE";
+        static float last_displayed_alt = 0.0f;
+        static const char* last_alt_src = "NONE";
+
         bool lidar_valid = flightData.has_altLidar && (millis() - lastRxAlt < 3000);
         bool us_valid = flightData.has_altUS && (millis() - lastRxAlt < 3000);
         bool baro_valid = flightData.has_baroAlt && (millis() - lastRxMain < 3000);
@@ -546,15 +550,25 @@ void taskUIDraw(void* pvParameters) {
         if (us_valid) {
             current_alt = flightData.altUS;
             alt_src = "U-SONIC";
+            last_displayed_alt = current_alt;
+            last_alt_src = alt_src;
         } else if (lidar_valid) {
             current_alt = flightData.altLidar;
             alt_src = "LIDAR";
-        } else if (baro_valid) {
-            current_alt = flightData.baroAlt;
-            alt_src = "BARO";
+            last_displayed_alt = current_alt;
+            last_alt_src = alt_src;
         } else {
-            current_alt = 0.0f;
-            alt_src = "NONE";
+            if (strcmp(last_alt_src, "NONE") != 0) {
+                // 有効値以外（ロスト・範囲外）になった場合、直前の対地高度の表示を維持
+                current_alt = last_displayed_alt;
+                alt_src = last_alt_src;
+            } else if (baro_valid) {
+                current_alt = flightData.baroAlt;
+                alt_src = "BARO";
+            } else {
+                current_alt = 0.0f;
+                alt_src = "NONE";
+            }
         }
 
         // HDG: GPS優先 -> メイン磁気方位 -> ピトー方位 の順で優先
