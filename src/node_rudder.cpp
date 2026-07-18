@@ -19,25 +19,15 @@
 volatile float rudderAngle_deg = 0.0f;  // Latest Angle [°]
 bool canReady = false;
 
+// Task Handles
+TaskHandle_t hRudderTask = NULL;
+
 // --------------------------------------------------------------------------
 // AS5600 Utility Functions (Direct register access via Wire)
 // --------------------------------------------------------------------------
 bool as5600CheckConnection() {
     Wire.beginTransmission(0x36);
     return (Wire.endTransmission() == 0);
-}
-
-bool as5600MagnetDetected() {
-    Wire.beginTransmission(0x36);
-    Wire.write(0x0B); // STATUS register
-    if (Wire.endTransmission() != 0) return false;
-    
-    Wire.requestFrom(0x36, 1);
-    if (Wire.available()) {
-        uint8_t status = Wire.read();
-        return (status & 0x20); // MD (Magnet Detected) bit
-    }
-    return false;
 }
 
 bool as5600ReadAngle(float& angle) {
@@ -92,37 +82,17 @@ bool sendAngleCAN(float angleDeg) {
 }
 
 // --------------------------------------------------------------------------
-// setup
+// Task: Rudder Measurement & CAN Tx Task (Priority: Medium-High)
 // --------------------------------------------------------------------------
-void setup() {
-    // Serial communication completely removed to avoid conflict on GPIO20/21
+void taskRudder(void* pvParameters) {
+    TickType_t xLastWakeTime = xTaskGetTickCount();
+    uint32_t lastHBTime = 0;
 
-    // I2C Initialize
-    Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
-    Wire.setClock(400000);  // 400kHz Fast Mode
+    while (true) {
+        // Run every 10ms (100Hz)
+        vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(SEND_INTERVAL_MS));
 
-    // AS5600 Connection Check
-    int retry = 0;
-    while (!as5600CheckConnection() && retry < 5) {
-        delay(500);
-        retry++;
-    }
-
-    // CAN Initialize
-    canReady = initCAN();
-}
-
-// --------------------------------------------------------------------------
-// loop
-// --------------------------------------------------------------------------
-void loop() {
-    static uint32_t lastSend  = 0;
-    uint32_t now = millis();
-
-    // 100 Hz : AS5600 angle measurement & CAN transmission
-    if (now - lastSend >= SEND_INTERVAL_MS) {
-        lastSend = now;
-
+        // 1. Angle Measurement
         float angle = 0.0f;
         if (as5600CheckConnection() && as5600ReadAngle(angle)) {
             rudderAngle_deg = angle;
@@ -130,21 +100,49 @@ void loop() {
             rudderAngle_deg = 0.0f;
         }
 
+        // 2. Transmit Angle
         if (canReady) {
             sendAngleCAN(rudderAngle_deg);
         }
+
+        // 3. 1Hz Heartbeat
+        uint32_t now = millis();
+        if (now - lastHBTime >= 1000) {
+            lastHBTime = now;
+            twai_message_t hbMsg = {};
+            hbMsg.identifier = CAN_ID_HB_RUDDER;
+            hbMsg.data_length_code = 1;
+            hbMsg.data[0] = NODE_ID_RUDDER;
+            twai_transmit(&hbMsg, pdMS_TO_TICKS(10));
+        }
+    }
+}
+
+// --------------------------------------------------------------------------
+// setup
+// --------------------------------------------------------------------------
+void setup() {
+    // I2C Initialize
+    Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
+    Wire.setClock(400000);  // 400kHz Fast Mode
+
+    // AS5600 Connection Check
+    int retry = 0;
+    while (!as5600CheckConnection() && retry < 5) {
+        delay(100);
+        retry++;
     }
 
-    // 1Hz CAN Heartbeat
-    static uint32_t lastHBrudder = 0;
-    if (now - lastHBrudder >= 1000) {
-        lastHBrudder = now;
-        twai_message_t hbMsg = {};
-        hbMsg.identifier = CAN_ID_HB_RUDDER;
-        hbMsg.data_length_code = 1;
-        hbMsg.data[0] = NODE_ID_RUDDER;
-        twai_transmit(&hbMsg, pdMS_TO_TICKS(10));
-    }
+    // CAN Initialize
+    canReady = initCAN();
 
-    delay(1); // Yield CPU to FreeRTOS scheduler to stabilize background task execution
+    // Create RTOS Task
+    xTaskCreate(taskRudder, "RUDDER", 2048, NULL, 4, &hRudderTask);
+}
+
+// --------------------------------------------------------------------------
+// loop
+// --------------------------------------------------------------------------
+void loop() {
+    vTaskDelay(pdMS_TO_TICKS(1000));
 }
