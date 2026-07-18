@@ -536,19 +536,19 @@ void taskUIDraw(void* pvParameters) {
         }
         bool has_att = main_att_valid || pitot_att_valid;
 
-        // ALT: LiDAR > 超音波 > 気圧高度 の順で優先
+        // ALT: 超音波 > LiDAR > 気圧高度 の順で優先
         float current_alt;
         const char* alt_src = "NONE";
         bool lidar_valid = flightData.has_altLidar && (millis() - lastRxAlt < 3000);
         bool us_valid = flightData.has_altUS && (millis() - lastRxAlt < 3000);
         bool baro_valid = flightData.has_baroAlt && (millis() - lastRxMain < 3000);
 
-        if (lidar_valid) {
-            current_alt = flightData.altLidar;
-            alt_src = "LIDAR";
-        } else if (us_valid) {
+        if (us_valid) {
             current_alt = flightData.altUS;
             alt_src = "U-SONIC";
+        } else if (lidar_valid) {
+            current_alt = flightData.altLidar;
+            alt_src = "LIDAR";
         } else if (baro_valid) {
             current_alt = flightData.baroAlt;
             alt_src = "BARO";
