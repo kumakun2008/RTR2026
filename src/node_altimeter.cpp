@@ -12,9 +12,9 @@
 #define URM_ECHO_PIN 3  // 基板上のD1 (GPIO3)
 #define URM_TRIG_PIN 4  // 基板上のD2 (GPIO4) (Corrected based on altimeter.txt)
 
-// CAN GPIO Pins (UART0競合回避のため D3/D10 に変更)
-#define CAN_TX_PIN 5
-#define CAN_RX_PIN 10
+// CAN GPIO Pins (GPIO20/21 に戻し、シリアル競合を避けるためSerialを完全無効化)
+#define CAN_TX_PIN 20
+#define CAN_RX_PIN 21
 
 // CAN IDs (11-bit standard)
 #define LIDAR_CAN_ID      0x100
@@ -73,11 +73,7 @@ void onI2CRequest() {
 }
 
 void initCAN() {
-    if (canBus.begin(CAN_TX_PIN, CAN_RX_PIN)) {
-        Serial.println("[OK] CAN Bus Driver Active (1Mbps)");
-    } else {
-        Serial.println("[ERROR] CAN Bus Initialization Failed!");
-    }
+    canBus.begin(CAN_TX_PIN, CAN_RX_PIN);
 }
 
 void sendSensorData(uint32_t id, const uint8_t* data, uint8_t dlc) {
@@ -85,14 +81,7 @@ void sendSensorData(uint32_t id, const uint8_t* data, uint8_t dlc) {
 }
 
 void setup() {
-    Serial.begin(115200);
-    // USB CDC シリアルの接続を最大3秒待機（PC接続時のデバッグ用）
-    uint32_t startWait = millis();
-    while (!Serial && (millis() - startWait < 3000)) {
-        delay(10);
-    }
-    delay(500);
-    Serial.println("--- Altimeter Node (ESP32-C3) Init ---");
+    // Serial communication completely removed to avoid conflict on GPIO20/21
 
     // Initialize TSD20 Lidar Serial at 460800 bps with expanded buffer (From altimeter.txt)
     Serial1.setRxBufferSize(2048); 
@@ -107,7 +96,6 @@ void setup() {
     Wire.begin(I2C_SLAVE_ADDR);
     Wire.onReceive(onI2CReceive);
     Wire.onRequest(onI2CRequest);
-    Serial.println("[OK] I2C Slave initialized at 0x30");
 
     // Initialize CAN
     initCAN();
@@ -185,23 +173,6 @@ void loop() {
         ultraData[0] = (ultrasoundDistance_cm >> 8) & 0xFF;
         ultraData[1] = ultrasoundDistance_cm & 0xFF;
         sendSensorData(ULTRASONIC_CAN_ID, ultraData, 2);
-
-        // Debug outputs when values are read
-        if (lidarDistance_mm > 0) {
-            Serial.printf("[Sensor Data] Lidar: %u mm\n", lidarDistance_mm);
-        } else {
-            Serial.println("[Sensor Warn] Lidar: 0 mm (No reading)");
-        }
-
-        if (duration > 0 && duration < 30000) {
-            Serial.printf("[Sensor Data] Ultrasonic: %u cm (pulse duration: %ld us)\n", ultrasoundDistance_cm, duration);
-        } else {
-            Serial.printf("[Sensor Warn] Ultrasonic: No pulse (duration: %ld us)\n", duration);
-        }
-
-        // Teleplot Output
-        Serial.printf(">alt_lidar:%d\n", lidarDistance_mm);
-        Serial.printf(">alt_ultrasonic:%d\n", ultrasoundDistance_cm);
     }
 
     // 1Hz CAN Heartbeat
