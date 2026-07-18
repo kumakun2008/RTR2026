@@ -8,9 +8,9 @@
 #define I2C_SDA_PIN  8
 #define I2C_SCL_PIN  9
 
-// CAN (TWAI) Pins
-#define CAN_TX_PIN GPIO_NUM_20
-#define CAN_RX_PIN GPIO_NUM_21
+// CAN (TWAI) Pins (UART0競合回避のため D3/D10 に変更)
+#define CAN_TX_PIN GPIO_NUM_5
+#define CAN_RX_PIN GPIO_NUM_10
 
 // ======== Sensor & CAN Timing Settings ========
 #define SEND_INTERVAL_MS   10   // 100 Hz (10ms)

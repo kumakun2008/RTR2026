@@ -12,9 +12,9 @@
 #define URM_ECHO_PIN 3  // 基板上のD1 (GPIO3)
 #define URM_TRIG_PIN 4  // 基板上のD2 (GPIO4) (Corrected based on altimeter.txt)
 
-// CAN GPIO Pins
-#define CAN_TX_PIN 20
-#define CAN_RX_PIN 21
+// CAN GPIO Pins (UART0競合回避のため D3/D10 に変更)
+#define CAN_TX_PIN 5
+#define CAN_RX_PIN 10
 
 // CAN IDs (11-bit standard)
 #define LIDAR_CAN_ID      0x100
