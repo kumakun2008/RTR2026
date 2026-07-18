@@ -100,7 +100,12 @@ bool sendAngleCAN(float angleDeg) {
 // --------------------------------------------------------------------------
 void setup() {
     Serial.begin(115200);
-    delay(2000);
+    // USB CDC シリアルの接続を最大3秒待機（PC接続時のデバッグ用）
+    uint32_t startWait = millis();
+    while (!Serial && (millis() - startWait < 3000)) {
+        delay(10);
+    }
+    delay(500);
     Serial.println("=== Rudder Node (ESP32-C3 + AS5600) Start ===");
 
     // I2C Initialize

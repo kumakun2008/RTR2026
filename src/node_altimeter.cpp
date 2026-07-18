@@ -90,7 +90,12 @@ void sendSensorData(uint32_t id, const uint8_t* data, uint8_t dlc) {
 
 void setup() {
     Serial.begin(115200);
-    delay(2000);
+    // USB CDC シリアルの接続を最大3秒待機（PC接続時のデバッグ用）
+    uint32_t startWait = millis();
+    while (!Serial && (millis() - startWait < 3000)) {
+        delay(10);
+    }
+    delay(500);
     Serial.println("--- Altimeter Node (ESP32-C3) Init ---");
 
     // Initialize TSD20 Lidar Serial at 460800 bps with expanded buffer (From altimeter.txt)
