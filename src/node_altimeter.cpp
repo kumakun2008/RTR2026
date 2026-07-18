@@ -136,28 +136,12 @@ void taskUltrasonic(void* pvParameters) {
         // Run every 500ms
         vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(500));
 
-        // 1. Wait for ECHO pin to go HIGH (standby state) to avoid immediate timeout
-        uint32_t waitStart = micros();
-        bool ready = true;
-        while (digitalRead(URM_ECHO_PIN) == LOW) {
-            if (micros() - waitStart > 10000) { // 10ms max wait
-                ready = false;
-                break;
-            }
-            vTaskDelay(pdMS_TO_TICKS(1)); // let other tasks run while waiting
-        }
-
-        if (!ready) {
-            ultrasoundDistance_cm = 65535;
-            continue;
-        }
-
-        // 2. Generate Trigger Pulse (Wait-HIGH, LOW active)
+        // Generate Trigger Pulse (Wait-HIGH, LOW active)
         digitalWrite(URM_TRIG_PIN, LOW);
         delayMicroseconds(50); // URM37 spec: triggers on >=50us LOW
         digitalWrite(URM_TRIG_PIN, HIGH);
 
-        // 3. Measure Echo Pulse duration (Active-LOW, 18ms max timeout = ~3m)
+        // Measure Echo Pulse duration (Active-LOW, 18ms max timeout = ~3m)
         long duration = pulseIn(URM_ECHO_PIN, LOW, 18000); 
         if (duration > 0 && duration < 18000) {
             float urm_mm = duration * 0.172f; // URM37v5.0 spec: 1us = 0.172mm
@@ -228,6 +212,7 @@ void setup() {
 }
 
 void loop() {
-    // Empty, all processing is handled by FreeRTOS tasks
-    vTaskDelay(pdMS_TO_TICKS(1000));
+    // 50msごとにCANの自動復旧状態を確認・回復させることで、LOSTの発生を極小化する
+    canBus.handleAutoRecovery();
+    vTaskDelay(pdMS_TO_TICKS(50));
 }

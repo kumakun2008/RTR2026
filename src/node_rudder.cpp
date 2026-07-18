@@ -13,7 +13,7 @@
 #define CAN_RX_PIN GPIO_NUM_21
 
 // ======== Sensor & CAN Timing Settings ========
-#define SEND_INTERVAL_MS   10   // 100 Hz (10ms)
+#define SEND_INTERVAL_MS   20   // 50 Hz (20ms) に落としてCANバスのトラフィックを低減
 
 // ======== Global Variables ========
 volatile float rudderAngle_deg = 0.0f;  // Latest Angle [°]
@@ -21,6 +21,20 @@ bool canReady = false;
 
 // Task Handles
 TaskHandle_t hRudderTask = NULL;
+
+// --------------------------------------------------------------------------
+// TWAI (CAN) Auto Recovery (Raw Driver Implementation)
+// --------------------------------------------------------------------------
+void handleCANAutoRecovery() {
+    twai_status_info_t status_info;
+    if (twai_get_status_info(&status_info) == ESP_OK) {
+        if (status_info.state == TWAI_STATE_BUS_OFF) {
+            twai_initiate_recovery();
+        } else if (status_info.state == TWAI_STATE_STOPPED) {
+            twai_start();
+        }
+    }
+}
 
 // --------------------------------------------------------------------------
 // AS5600 Utility Functions (Direct register access via Wire)
@@ -89,10 +103,13 @@ void taskRudder(void* pvParameters) {
     uint32_t lastHBTime = 0;
 
     while (true) {
-        // Run every 10ms (100Hz)
+        // Run every 20ms (50Hz)
         vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(SEND_INTERVAL_MS));
 
-        // 1. Angle Measurement
+        // 1. CAN Auto Recovery check
+        handleCANAutoRecovery();
+
+        // 2. Angle Measurement
         float angle = 0.0f;
         if (as5600CheckConnection() && as5600ReadAngle(angle)) {
             rudderAngle_deg = angle;
@@ -100,12 +117,12 @@ void taskRudder(void* pvParameters) {
             rudderAngle_deg = 0.0f;
         }
 
-        // 2. Transmit Angle
+        // 3. Transmit Angle
         if (canReady) {
             sendAngleCAN(rudderAngle_deg);
         }
 
-        // 3. 1Hz Heartbeat
+        // 4. 1Hz Heartbeat
         uint32_t now = millis();
         if (now - lastHBTime >= 1000) {
             lastHBTime = now;
@@ -144,5 +161,7 @@ void setup() {
 // loop
 // --------------------------------------------------------------------------
 void loop() {
-    vTaskDelay(pdMS_TO_TICKS(1000));
+    // 50msごとにCANの自動復旧状態を確認・回復させる
+    handleCANAutoRecovery();
+    vTaskDelay(pdMS_TO_TICKS(50));
 }
