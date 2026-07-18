@@ -167,7 +167,7 @@ void loop() {
 
         long duration = pulseIn(URM_ECHO_PIN, LOW, 30000); 
         if (duration > 0 && duration < 30000) {
-            float urm_mm = duration * 0.2f; 
+            float urm_mm = duration * 0.172f; // URM37v5.0 spec: 1us = 0.172mm
             uint16_t cm = (uint16_t)(urm_mm / 10.0f);
             ultrasoundDistance_cm = cm;
         } else {

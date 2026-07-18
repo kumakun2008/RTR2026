@@ -374,15 +374,23 @@ void taskCANReceive(void* pvParameters) {
             }
             else if (rxId == CAN_ID_ALT_LIDAR) {
                 uint16_t rawLidar = (uint16_t)((rxData[0] << 8) | rxData[1]);
-                flightData.altLidar = (float)rawLidar / 1000.0f;
-                flightData.has_altLidar = true;
+                if (rawLidar == 65535) {
+                    flightData.has_altLidar = false;
+                } else {
+                    flightData.altLidar = (float)rawLidar / 1000.0f;
+                    flightData.has_altLidar = true;
+                }
                 lastRxAlt = millis();
             }
             else if (rxId == CAN_ID_ALT_US) {
                 // Fix #5: decode uint16_t big-endian (matches updated altimeter node)
                 uint16_t rawUS = (uint16_t)((rxData[0] << 8) | rxData[1]);
-                flightData.altUS = (float)rawUS / 100.0f;
-                flightData.has_altUS = true;
+                if (rawUS == 65535) {
+                    flightData.has_altUS = false;
+                } else {
+                    flightData.altUS = (float)rawUS / 100.0f;
+                    flightData.has_altUS = true;
+                }
                 lastRxAlt = millis();
             }
             else if (rxId == CAN_ID_GPS_LAT_UPPER) {
@@ -524,6 +532,10 @@ void taskBatteryVoltage(void* pvParameters) {
 void taskTelemetry(void* pvParameters) {
     TickType_t xLastWakeTime = xTaskGetTickCount();
     esp_task_wdt_add(NULL);
+
+    static float last_displayed_alt = 0.0f;
+    static const char* last_alt_src = "NONE";
+
     while (true) {
         vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(100));
         if (telemetry.isOTAModeActive()) {
@@ -531,6 +543,36 @@ void taskTelemetry(void* pvParameters) {
         } else {
             telemetry.process();
             
+            // Determine current altitude (Sync with display priority: Ultrasonic > LiDAR > BARO)
+            float current_alt = 0.0f;
+            bool lidar_valid = flightData.has_altLidar && (millis() - lastRxAlt < 3000);
+            bool us_valid = flightData.has_altUS && (millis() - lastRxAlt < 3000);
+
+            float baroAlt = 0.0f;
+            bool baro_valid = false;
+            if (flightData.baroPress > 500.0f && flightData.baroPress < 1100.0f) {
+                baroAlt = 44330.0f * (1.0f - powf(flightData.baroPress / 1013.25f, 0.1903f));
+                baro_valid = (millis() - lastRxMain < 3000);
+            }
+
+            if (us_valid) {
+                current_alt = flightData.altUS;
+                last_displayed_alt = current_alt;
+                last_alt_src = "U-SONIC";
+            } else if (lidar_valid) {
+                current_alt = flightData.altLidar;
+                last_displayed_alt = current_alt;
+                last_alt_src = "LIDAR";
+            } else {
+                if (strcmp(last_alt_src, "NONE") != 0) {
+                    current_alt = last_displayed_alt;
+                } else if (baro_valid) {
+                    current_alt = baroAlt;
+                } else {
+                    current_alt = 0.0f;
+                }
+            }
+
             // Format: $TEL2,battery,pressure,altitude,gpsSats,airspeed,pitch,roll,heading,rudder,lat,lon,gpsAlt,
             //         rxMain,rxPitot,rxRudder,rxGPS,rxAlt,rxBridge,rxLadder,rxElev,
             //         hbMain,hbPitot,hbRudder,hbGPS,hbAlt,hbLadder,hbElev,hbSpk,curTime*
@@ -541,7 +583,7 @@ void taskTelemetry(void* pvParameters) {
                      "%u,%u,%u,%u,%u,%u,%u,%u,%u*",
                      battery.readVoltage(),
                      flightData.baroPress,
-                     flightData.altLidar,
+                     current_alt, // Sends the stabilized priority altitude (consistent with display)
                      flightData.gpsSats,
                      flightData.pitotPress32,
                      flightData.gyro[0],
