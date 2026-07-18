@@ -37,6 +37,11 @@ TaskHandle_t hLidarTask = NULL;
 TaskHandle_t hUSonicTask = NULL;
 TaskHandle_t hCANTask = NULL;
 
+// Ultrasonic Interrupt Variables
+volatile uint32_t echoStart = 0;
+volatile uint32_t echoDuration = 0;
+volatile bool echoNewData = false;
+
 // TSD20 チェックサム計算
 uint8_t calculateChecksum(uint8_t *_pbuff, uint16_t _cmdLen) {
     uint8_t cmd_sum = 0;
@@ -69,6 +74,25 @@ void onI2CRequest() {
         Wire.write((const uint8_t*)&buffer[i2cRegisterPointer], bytesToSend);
     } else {
         Wire.write(0x00);
+    }
+}
+
+// --------------------------------------------------------------------------
+// Ultrasonic Echo Pin Interrupt Service Routine (ISR)
+// URM37v5.0 outputs an active-LOW pulse when measuring.
+// --------------------------------------------------------------------------
+void IRAM_ATTR echoISR() {
+    uint32_t now = micros();
+    if (digitalRead(URM_ECHO_PIN) == LOW) {
+        // Echo pulse start (Falling edge)
+        echoStart = now;
+    } else {
+        // Echo pulse end (Rising edge)
+        if (echoStart != 0) {
+            echoDuration = now - echoStart;
+            echoNewData = true;
+            echoStart = 0;
+        }
     }
 }
 
@@ -127,7 +151,7 @@ void taskLidar(void* pvParameters) {
 }
 
 // --------------------------------------------------------------------------
-// Task 2: URM37 Ultrasonic Measurement Task (Priority: Low)
+// Task 2: URM37 Ultrasonic Measurement Task (Priority: Low - Fully Non-blocking)
 // --------------------------------------------------------------------------
 void taskUltrasonic(void* pvParameters) {
     TickType_t xLastWakeTime = xTaskGetTickCount();
@@ -136,19 +160,31 @@ void taskUltrasonic(void* pvParameters) {
         // Run every 500ms
         vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(500));
 
-        // Generate Trigger Pulse (Wait-HIGH, LOW active)
+        // 1. Reset variables
+        echoNewData = false;
+        echoStart = 0;
+
+        // 2. Generate Trigger Pulse (Wait-HIGH, LOW active)
         digitalWrite(URM_TRIG_PIN, LOW);
         delayMicroseconds(50); // URM37 spec: triggers on >=50us LOW
         digitalWrite(URM_TRIG_PIN, HIGH);
 
-        // Measure Echo Pulse duration (Active-LOW, 18ms max timeout = ~3m)
-        long duration = pulseIn(URM_ECHO_PIN, LOW, 18000); 
-        if (duration > 0 && duration < 18000) {
-            float urm_mm = duration * 0.172f; // URM37v5.0 spec: 1us = 0.172mm
-            uint16_t cm = (uint16_t)(urm_mm / 10.0f);
-            ultrasoundDistance_cm = cm;
+        // 3. Sleep for 18ms (Maximum range timeout equivalent to ~3m)
+        // This yields CPU 100% back to FreeRTOS so CAN/Lidar tasks run smoothly.
+        vTaskDelay(pdMS_TO_TICKS(18));
+
+        // 4. Resolve measurement from ISR
+        if (echoNewData) {
+            uint32_t duration = echoDuration;
+            if (duration > 0 && duration < 18000) {
+                float urm_mm = (float)duration * 0.172f; // URM37v5.0 spec: 1us = 0.172mm
+                uint16_t cm = (uint16_t)(urm_mm / 10.0f);
+                ultrasoundDistance_cm = cm;
+            } else {
+                ultrasoundDistance_cm = 65535; // out-of-range
+            }
         } else {
-            ultrasoundDistance_cm = 65535; // out-of-range
+            ultrasoundDistance_cm = 65535; // timeout (sensor not connected)
         }
     }
 }
@@ -191,10 +227,12 @@ void setup() {
     Serial1.setRxBufferSize(2048); 
     Serial1.begin(460800, SERIAL_8N1, TSD_RX, TSD_TX);
 
-    // Initialize URM37v5.0 Pins
+    // Initialize URM37v5.0 Pins & Interrupt
     pinMode(URM_TRIG_PIN, OUTPUT);
-    pinMode(URM_ECHO_PIN, INPUT_PULLUP); // Use pull-up for open-collector/noise immunity
     digitalWrite(URM_TRIG_PIN, HIGH);
+    
+    pinMode(URM_ECHO_PIN, INPUT_PULLUP); // Use pull-up for open-collector/noise immunity
+    attachInterrupt(digitalPinToInterrupt(URM_ECHO_PIN), echoISR, CHANGE);
 
     // Initialize I2C Slave at 0x30
     Wire.begin(I2C_SLAVE_ADDR);
