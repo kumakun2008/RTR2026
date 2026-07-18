@@ -9,8 +9,8 @@
 
 #define I2C_SDA_PIN 21
 #define I2C_SCL_PIN 22
-#define CAN_TX_PIN   33
-#define CAN_RX_PIN   32 
+#define CAN_TX_PIN   32
+#define CAN_RX_PIN   33 
 // Note: CAN_STB (MCP2561 pin 8) is hardware-grounded - no software control needed
 #define GPS_RX_PIN   16
 #define GPS_TX_PIN   17
@@ -111,38 +111,102 @@ void taskSerialPassthrough(void* pvParameters) {
 
 void taskSensorAcquisition(void* pvParameters) {
     TickType_t xLastWakeTime = xTaskGetTickCount();
+
+    // GGA受信を追跡するための変数（fix_statusが0以外になれば接続確認済み）
+    static uint32_t lastGGAReceiveMs  = 0;
+    static uint32_t lastRMCReceiveMs  = 0;
+    static uint32_t lastCANSendMs     = 0;
+    static bool     ggaEverReceived   = false;
+
     while (true) {
         vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(100)); // 10Hz
-        GPSPayload gpsData;
-        if (gpsSync.getGPSData(gpsData)) {
-            // Split double Lat/Lon and transmit
+
+        GPSPayload gpsData = { 0.0, 0.0, 0.0f, 0.0f, 0, 0, 0, 0.0f };
+        bool hasFresh = gpsSync.getGPSData(gpsData);
+
+        uint32_t now = millis();
+
+        if (hasFresh) {
+            // utcが0でなければ何らかのNMEAを受信している
+            if (gpsData.utc > 0) lastRMCReceiveMs = now;
+
+            // sat_count > 0 は GGA 受信の証拠
+            if (gpsData.sat_count > 0 || gpsData.fix_status > 0) {
+                ggaEverReceived = true;
+                lastGGAReceiveMs = now;
+            }
+        }
+
+        // ---- CAN 送信: 10Hzで常に送信 ----
+        // (1) 接続ハートビート / Fix状態 / 衛星数 / HDOP は常時送信
+        canBus.transmitInt32(CAN_ID_GPS_SATS, (int32_t)gpsData.sat_count);
+        canBus.transmitInt32(CAN_ID_GPS_FIX,  (int32_t)gpsData.fix_status);
+        canBus.transmitScaled(CAN_ID_GPS_HDOP, gpsData.hdop, CAN_Scale::GPS_HDOP);
+
+        // (2) 時刻の送信 (受信していない場合でも0を送信)
+        if (gpsData.utc > 0.0f) {
+            canBus.transmitInt32(CAN_ID_GPS_UTC, (int32_t)gpsData.utc);
+        } else {
+            canBus.transmitInt32(CAN_ID_GPS_UTC, 0);
+        }
+
+        // (3) 座標・速度・高度・方位の送信 (受信していない場合でも0を送信)
+        if (gpsSync.hasValidCoord()) {
             canBus.transmitDoubleSplit(CAN_ID_GPS_LAT_UPPER, CAN_ID_GPS_LAT_LOWER, gpsData.latitude);
             canBus.transmitDoubleSplit(CAN_ID_GPS_LON_UPPER, CAN_ID_GPS_LON_LOWER, gpsData.longitude);
-            
-            // Transmit scaled floats
-            canBus.transmitScaled(CAN_ID_GPS_ALT, gpsData.altitude, CAN_Scale::GPS_ALT);
-            canBus.transmitScaled(CAN_ID_GPS_SPEED, gpsData.speed, CAN_Scale::GPS_SPEED);
-            canBus.transmitScaled(CAN_ID_GPS_AZIMUTH, (float)gpsData.heading, CAN_Scale::GPS_AZIMUTH);
-            
-            // JST time as int32 (stored in utc field)
-            canBus.transmitInt32(CAN_ID_GPS_UTC, (int32_t)gpsData.utc);
-            
-            // Transmit new GPS metrics
-            canBus.transmitInt32(CAN_ID_GPS_SATS, (int32_t)gpsData.sat_count);
-            canBus.transmitInt32(CAN_ID_GPS_FIX, (int32_t)gpsData.fix_status);
-            canBus.transmitScaled(CAN_ID_GPS_HDOP, gpsData.hdop, CAN_Scale::GPS_HDOP);
+            canBus.transmitScaled(CAN_ID_GPS_ALT,     gpsData.altitude,         CAN_Scale::GPS_ALT);
+            canBus.transmitScaled(CAN_ID_GPS_SPEED,   gpsData.speed,            CAN_Scale::GPS_SPEED);
+            canBus.transmitScaled(CAN_ID_GPS_AZIMUTH, (float)gpsData.heading,   CAN_Scale::GPS_AZIMUTH);
+        } else {
+            canBus.transmitDoubleSplit(CAN_ID_GPS_LAT_UPPER, CAN_ID_GPS_LAT_LOWER, 0.0);
+            canBus.transmitDoubleSplit(CAN_ID_GPS_LON_UPPER, CAN_ID_GPS_LON_LOWER, 0.0);
+            canBus.transmitScaled(CAN_ID_GPS_ALT,     0.0f,                     CAN_Scale::GPS_ALT);
+            canBus.transmitScaled(CAN_ID_GPS_SPEED,   0.0f,                     CAN_Scale::GPS_SPEED);
+            canBus.transmitScaled(CAN_ID_GPS_AZIMUTH, 0.0f,                     CAN_Scale::GPS_AZIMUTH);
+        }
 
-            // Teleplot Output (10Hz)
+        // ---- Teleplot / Serial デバッグ出力 ----
+        Serial.printf(">gps_sats:%d\n", gpsData.sat_count);
+        Serial.printf(">gps_fix:%d\n",  gpsData.fix_status);
+        Serial.printf(">gps_hdop:%.2f\n", gpsData.hdop);
+
+        if (gpsSync.hasValidCoord()) {
             Serial.printf(">gps_lat:%.6f\n", gpsData.latitude);
             Serial.printf(">gps_lon:%.6f\n", gpsData.longitude);
             Serial.printf(">gps_alt:%.2f\n", gpsData.altitude);
             Serial.printf(">gps_speed:%.2f\n", gpsData.speed);
             Serial.printf(">gps_heading:%.2f\n", (float)gpsData.heading / 100.0f);
-            Serial.printf(">gps_sats:%d\n", gpsData.sat_count);
-            Serial.printf(">gps_fix:%d\n", gpsData.fix_status);
+        }
+
+        // ---- NMEA 無受信タイムアウト警告 (5秒) ----
+        if (now - lastRMCReceiveMs > 5000) {
+            // NMEA が来ていない場合の警告 (起動直後の5秒は猶予)
+            if (now > 5000) {
+                Serial.println("[GPS WARN] No NMEA sentence received for 5s - check wiring/baud");
+            }
+        }
+
+        // ---- 状態サマリ (5秒に1回) ----
+        static uint32_t lastStatusMs = 0;
+        if (now - lastStatusMs >= 5000) {
+            lastStatusMs = now;
+            Serial.printf("[GPS] Fix:%d  Sats:%d  HDOP:%.1f  Coord:%s  Synced:%s\n",
+                gpsData.fix_status,
+                gpsData.sat_count,
+                gpsData.hdop,
+                gpsSync.hasValidCoord() ? "OK" : "NO",
+                gpsSync.isSynced()     ? "OK" : "NO");
+        }
+
+        static uint32_t lastHBgps = 0;
+        if (now - lastHBgps >= 1000) {
+            lastHBgps = now;
+            uint8_t hbPayload = NODE_ID_GPS;
+            canBus.transmitRaw(CAN_ID_HB_GPS, &hbPayload, 1);
         }
     }
 }
+
 
 void taskCANReceive(void* pvParameters) {
     uint32_t rxId = 0;

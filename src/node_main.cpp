@@ -67,12 +67,23 @@ volatile bool isOtaMode = false;
 uint32_t otaTimeoutStart = 0;
 
 // CAN node communication timestamps
-volatile uint32_t lastRxMain = 0;
-volatile uint32_t lastRxPitot = 0;
+// lastRxXxx = last time ANY sensor data frame from that node was received
+// lastHbXxx = last time the node's heartbeat frame (0x0Fx) was received
+volatile uint32_t lastRxMain   = 0;
+volatile uint32_t lastRxPitot  = 0;
 volatile uint32_t lastRxRudder = 0;
-volatile uint32_t lastRxGPS = 0;
-volatile uint32_t lastRxAlt = 0;
+volatile uint32_t lastRxGPS    = 0;
+volatile uint32_t lastRxAlt    = 0;
 volatile uint32_t lastRxBridge = 0;
+volatile uint32_t lastRxElevator = 0;
+
+volatile uint32_t lastHbMain     = 0;
+volatile uint32_t lastHbPitot    = 0;
+volatile uint32_t lastHbRudder   = 0;
+volatile uint32_t lastHbGPS      = 0;
+volatile uint32_t lastHbAlt      = 0;
+volatile uint32_t lastHbElevator = 0;
+volatile uint32_t lastHbSpeaker  = 0;
 
 void taskSensorAcquisition(void* pvParameters);
 void taskCANReceive(void* pvParameters);
@@ -260,6 +271,13 @@ void taskSensorAcquisition(void* pvParameters) {
         }
 
         loopCounter++;
+
+        static uint32_t lastHBmain = 0;
+        if (millis() - lastHBmain >= 1000) {
+            lastHBmain = millis();
+            uint8_t hbPayload = NODE_ID_MAIN;
+            canBus.transmitRaw(CAN_ID_HB_MAIN, &hbPayload, 1);
+        }
     }
 }
 
@@ -304,6 +322,16 @@ void taskCANReceive(void* pvParameters) {
 
             lastRxMain = millis();
 
+            // Heartbeat frames (0x0F0 range)
+            if (rxId == CAN_ID_HB_MAIN)     { lastHbMain     = millis(); }
+            else if (rxId == CAN_ID_HB_PITOT)    { lastHbPitot    = millis(); }
+            else if (rxId == CAN_ID_HB_RUDDER)   { lastHbRudder   = millis(); }
+            else if (rxId == CAN_ID_HB_GPS)      { lastHbGPS      = millis(); }
+            else if (rxId == CAN_ID_HB_ALT)      { lastHbAlt      = millis(); }
+            else if (rxId == CAN_ID_HB_ELEVATOR) { lastHbElevator = millis(); }
+            else if (rxId == CAN_ID_HB_SPEAKER)  { lastHbSpeaker  = millis(); }
+
+            // Sensor data frames — update node-specific lastRx timestamps
             if (rxId == CAN_ID_PITOT_AIRSPEED) {
                 flightData.pitotPress32 = getFloat(rxData, CAN_Scale::GPS_SPEED);
                 lastRxPitot = millis();
@@ -503,29 +531,47 @@ void taskTelemetry(void* pvParameters) {
         } else {
             telemetry.process();
             
-            // Format expanded telemetry data to Bluetooth Android app
-            // Format: $TEL,battery,pressure,altitude,gpsSats,airspeed,pitch,roll,heading,rudder,lat,lon,gpsAlt,lastRxMain,lastRxPitot,lastRxRudder,lastRxGPS,lastRxAlt,lastRxBridge*
-            char stateStr[256];
-            snprintf(stateStr, sizeof(stateStr), 
-                     "$TEL,%.2f,%.2f,%.2f,%d,%.2f,%.2f,%.2f,%d,%.2f,%.6f,%.6f,%.2f,%u,%u,%u,%u,%u,%u*", 
-                     battery.readVoltage(), 
+            // Format: $TEL2,battery,pressure,altitude,gpsSats,airspeed,pitch,roll,heading,rudder,lat,lon,gpsAlt,
+            //         rxMain,rxPitot,rxRudder,rxGPS,rxAlt,rxBridge,rxLadder,rxElev,
+            //         hbMain,hbPitot,hbRudder,hbGPS,hbAlt,hbLadder,hbElev,hbSpk,curTime*
+            char stateStr[384];
+            snprintf(stateStr, sizeof(stateStr),
+                     "$TEL2,%.2f,%.2f,%.2f,%d,%.2f,%.2f,%.2f,%d,%.2f,%.6f,%.6f,%.2f,%d,%d,"
+                     "%u,%u,%u,%u,%u,%u,%u,%u,"
+                     "%u,%u,%u,%u,%u,%u,%u,%u,%u*",
+                     battery.readVoltage(),
                      flightData.baroPress,
                      flightData.altLidar,
                      flightData.gpsSats,
-                     flightData.pitotPress32, // airspeed
-                     flightData.gyro[0],      // pitch
-                     flightData.gyro[1],      // roll
-                     flightData.gpsHeading,   // heading
-                     flightData.rudderAngle,  // rudder angle
-                     flightData.gpsLat,       // lat
-                     flightData.gpsLon,       // lon
-                     flightData.gpsAlt,       // gpsAlt
-                     millis(),                // lastRxMain
+                     flightData.pitotPress32,
+                     flightData.gyro[0],
+                     flightData.gyro[1],
+                     flightData.gpsHeading,
+                     flightData.rudderAngle,
+                     flightData.gpsLat,
+                     flightData.gpsLon,
+                     flightData.gpsAlt,
+                     flightData.gpsFix,
+                     flightData.gpsSats,
+                     // データ受信タイムスタンプ (センサーフレーム)
+                     millis(),        // rxMain (self)
                      lastRxPitot,
                      lastRxRudder,
                      lastRxGPS,
                      lastRxAlt,
-                     lastRxBridge);
+                     lastRxBridge,
+                     0U,              // rxLadder (deprecated)
+                     lastRxElevator,
+                     // ハートビートタイムスタンプ
+                     lastHbMain,
+                     lastHbPitot,
+                     lastHbRudder,
+                     lastHbGPS,
+                     lastHbAlt,
+                     0U,              // hbLadder (deprecated)
+                     lastHbElevator,
+                     lastHbSpeaker,
+                     millis());
             telemetry.sendText(stateStr);
         }
         esp_task_wdt_reset();

@@ -64,10 +64,13 @@ public:
     bool transmitCalibZero();
     bool transmitOtaStart();
     void printStatus();
+    bool isInitialized() const { return _initialized; }
 
 private:
     bool _initialized;
     int  _stbPin = -1; ///< GPIO for MCP2561/BD41041 STB pin (-1 = not used)
+    uint32_t _lastRecoveryAttemptMs = 0;
+    void handleAutoRecovery();
 };
 
 #endif // CAN_MANAGER_HPP

@@ -29,11 +29,22 @@ volatile bool isOtaMode = false;
 uint32_t otaTimeoutStart = 0;
 
 struct DisplayTelemetry {
-    float accel[3] = {0.0f};
-    float gyro[3] = {0.0f};
-    float mag[3] = {0.0f};
-    float baroPress = 0.0f;
-    float baroTemp = 0.0f;
+    // Main IMU (0x010-0x015)
+    float accel[3] = {0.0f};    ///< g
+    float gyro[3]  = {0.0f};    ///< dps
+    float mag[3]   = {0.0f};    ///< uT
+    // Attitude derived from Main IMU accel (tilt angles)
+    float mainPitch = 0.0f;     ///< degrees (positive = nose up)
+    float mainRoll  = 0.0f;     ///< degrees (positive = right bank)
+    bool  has_mainIMU = false;
+    // Pitot Attitude (0x033-0x034) – overrides main IMU attitude if present
+    float pitotPitch = 0.0f;
+    float pitotRoll  = 0.0f;
+    bool  has_pitotAtt = false;
+    float baroPress = 0.0f;     ///< hPa (from 0x040)
+    float baroTemp  = 0.0f;
+    float baroAlt   = 0.0f;     ///< metres (calculated)
+    bool  has_baroAlt = false;
     float pitotPress32 = 0.0f;
     float pitotPress31_1 = 0.0f;
     float pitotPress31_2 = 0.0f;
@@ -49,14 +60,16 @@ struct DisplayTelemetry {
     float altLidar = 0.0f;
     float altUS = 0.0f;
     float rudderAngle = 0.0f;
-    
+    float elevatorPitch = 0.0f;
+    float elevatorRoll = 0.0f;
+
     // Status flags
     bool has_batteryVolt = false;
     bool has_pitotPress32 = false;
     bool has_altLidar = false;
     bool has_altUS = false;
-    bool has_gyro = false;
     bool has_rudderAngle = false;
+    bool has_elevatorAtt = false;
     bool has_gpsPos = false;
     bool has_gpsAlt = false;
 } flightData;
@@ -75,24 +88,44 @@ struct PrevDrawData {
 
 volatile bool useArakawaMap = false;
 
-// Global timestamps for tracking node communication status
+// Global timestamps for tracking node communication status (last sensor data rx)
 volatile uint32_t lastRxMain = 0;
 volatile uint32_t lastRxPitot = 0;
 volatile uint32_t lastRxRudder = 0;
 volatile uint32_t lastRxGPS = 0;
 volatile uint32_t lastRxAlt = 0;
 volatile uint32_t lastRxBridge = 0;
+volatile uint32_t lastRxElevator = 0;
 
-void drawNodeStatus(int x, int y, const char* name, uint32_t lastRx) {
+// Global timestamps for tracking node heartbeat status (last HB packet rx)
+volatile uint32_t lastHbMain = 0;
+volatile uint32_t lastHbPitot = 0;
+volatile uint32_t lastHbRudder = 0;
+volatile uint32_t lastHbGPS = 0;
+volatile uint32_t lastHbAlt = 0;
+volatile uint32_t lastHbBridge = 0; // Speaker (formerly bridge status)
+volatile uint32_t lastHbElevator = 0;
+
+void drawNodeStatus(int x, int y, const char* name, uint32_t lastHb, uint32_t lastRx) {
     tft.setCursor(x, y);
     tft.setTextSize(1);
     tft.setTextColor(ILI9341_WHITE, ILI9341_BLACK);
     tft.print(name);
     tft.print(":");
-    if (millis() - lastRx < 2000) {
+
+    bool hbActive = (millis() - lastHb < 3000);
+    bool rxActive = (millis() - lastRx < 3000);
+
+    if (rxActive) {
+        // データが正常に届いている
         tft.setTextColor(ILI9341_GREEN, ILI9341_BLACK);
         tft.print("OK  ");
+    } else if (hbActive) {
+        // ハートビートはあるがデータが無い (接続中)
+        tft.setTextColor(ILI9341_YELLOW, ILI9341_BLACK);
+        tft.print("CONN");
     } else {
+        // どちらも無い (LOST)
         tft.setTextColor(ILI9341_RED, ILI9341_BLACK);
         tft.print("LOST");
     }
@@ -256,7 +289,7 @@ void taskCANReceive(void* pvParameters) {
             else if (rxId >= 0x020 && rxId <= 0x026) {
                 lastRxRudder = millis();
             }
-            else if (rxId >= 0x050 && rxId <= 0x057) {
+            else if (rxId >= 0x050 && rxId <= 0x05a) {
                 lastRxGPS = millis();
             }
             else if (rxId == CAN_ID_ALT_LIDAR || rxId == CAN_ID_ALT_US) {
@@ -265,6 +298,17 @@ void taskCANReceive(void* pvParameters) {
             else if (rxId == 0x042 || rxId == CAN_ID_VOICE_CMD) {
                 lastRxBridge = millis();
             }
+            else if (rxId >= 0x090 && rxId <= 0x098) {
+                lastRxElevator = millis();
+            }
+            // ハートビートIDの判定 (0x0F0 - 0x0F7)
+            else if (rxId == CAN_ID_HB_MAIN)     { lastHbMain     = millis(); }
+            else if (rxId == CAN_ID_HB_PITOT)    { lastHbPitot    = millis(); }
+            else if (rxId == CAN_ID_HB_RUDDER)   { lastHbRudder   = millis(); }
+            else if (rxId == CAN_ID_HB_GPS)      { lastHbGPS      = millis(); }
+            else if (rxId == CAN_ID_HB_ALT)      { lastHbAlt      = millis(); }
+            else if (rxId == CAN_ID_HB_ELEVATOR) { lastHbElevator = millis(); }
+            else if (rxId == CAN_ID_HB_SPEAKER)  { lastHbBridge   = millis(); }
 
             auto getFloat = [&](const uint8_t* d, float scale) {
                 int32_t raw;
@@ -272,7 +316,46 @@ void taskCANReceive(void* pvParameters) {
                 return (float)raw / scale;
             };
 
-            if (rxId == CAN_ID_PITOT_AIRSPEED) {
+            // ---- Main IMU (0x010-0x018) ----
+            if (rxId == CAN_ID_MAIN_ACC_X) {
+                flightData.accel[0] = getFloat(rxData, CAN_Scale::ACCEL);
+            }
+            else if (rxId == CAN_ID_MAIN_ACC_Y) {
+                flightData.accel[1] = getFloat(rxData, CAN_Scale::ACCEL);
+            }
+            else if (rxId == CAN_ID_MAIN_ACC_Z) {
+                flightData.accel[2] = getFloat(rxData, CAN_Scale::ACCEL);
+                // AccZ last in burst → derive tilt angles from accelerometer
+                float ax = flightData.accel[0];
+                float ay = flightData.accel[1];
+                float az = flightData.accel[2];
+                float norm = sqrtf(ax*ax + ay*ay + az*az);
+                if (norm > 0.1f) {
+                    flightData.mainRoll  =  atan2f(ay, az) * RAD_TO_DEG;
+                    flightData.mainPitch = -atan2f(ax, sqrtf(ay*ay + az*az)) * RAD_TO_DEG;
+                }
+                flightData.has_mainIMU = true;
+            }
+            else if (rxId == CAN_ID_MAIN_GYRO_X) {
+                flightData.gyro[0] = getFloat(rxData, CAN_Scale::GYRO);
+            }
+            else if (rxId == CAN_ID_MAIN_GYRO_Y) {
+                flightData.gyro[1] = getFloat(rxData, CAN_Scale::GYRO);
+            }
+            else if (rxId == CAN_ID_MAIN_GYRO_Z) {
+                flightData.gyro[2] = getFloat(rxData, CAN_Scale::GYRO);
+            }
+            else if (rxId == CAN_ID_MAIN_MAG_X) {
+                flightData.mag[0] = getFloat(rxData, CAN_Scale::MAG);
+            }
+            else if (rxId == CAN_ID_MAIN_MAG_Y) {
+                flightData.mag[1] = getFloat(rxData, CAN_Scale::MAG);
+            }
+            else if (rxId == CAN_ID_MAIN_MAG_Z) {
+                flightData.mag[2] = getFloat(rxData, CAN_Scale::MAG);
+            }
+            // ---- Pitot Attitude (0x033-0x034) overrides main IMU attitude ----
+            else if (rxId == CAN_ID_PITOT_AIRSPEED) {
                 flightData.pitotPress32 = getFloat(rxData, CAN_Scale::GPS_SPEED);
                 flightData.has_pitotPress32 = true;
             }
@@ -283,16 +366,24 @@ void taskCANReceive(void* pvParameters) {
                 flightData.pitotPress31_2 = getFloat(rxData, CAN_Scale::PRESSURE);
             }
             else if (rxId == CAN_ID_PITOT_PITCH) {
-                flightData.gyro[0] = getFloat(rxData, CAN_Scale::ANGLE);
-                flightData.has_gyro = true;
+                flightData.pitotPitch = getFloat(rxData, CAN_Scale::ANGLE);
+                flightData.has_pitotAtt = true;
             }
             else if (rxId == CAN_ID_PITOT_ROLL) {
-                flightData.gyro[1] = getFloat(rxData, CAN_Scale::ANGLE);
-                flightData.has_gyro = true;
+                flightData.pitotRoll = getFloat(rxData, CAN_Scale::ANGLE);
+                flightData.has_pitotAtt = true;
             }
             else if (rxId == CAN_ID_RUDDER_ANGLE) {
                 flightData.rudderAngle = getFloat(rxData, CAN_Scale::ANGLE);
                 flightData.has_rudderAngle = true;
+            }
+            else if (rxId == CAN_ID_ELEV_PITCH) {
+                flightData.elevatorPitch = getFloat(rxData, CAN_Scale::ANGLE);
+                flightData.has_elevatorAtt = true;
+            }
+            else if (rxId == CAN_ID_ELEV_ROLL) {
+                flightData.elevatorRoll = getFloat(rxData, CAN_Scale::ANGLE);
+                flightData.has_elevatorAtt = true;
             }
             // 高度計受信: 0x100=Lidar(Big-Endian 16bit mm), 0x101=超音波(Big-Endian 16bit cm)
             else if (rxId == CAN_ID_ALT_LIDAR) { 
@@ -345,7 +436,13 @@ void taskCANReceive(void* pvParameters) {
                 flightData.has_batteryVolt = true;
             }
             else if (rxId == CAN_ID_MAIN_PRESS) {
-                flightData.baroPress = getFloat(rxData, CAN_Scale::PRESSURE) / 100.0f;
+                // CAN_Scale::PRESSURE = 100.0f  →  raw int = hPa * 100
+                flightData.baroPress = getFloat(rxData, CAN_Scale::PRESSURE);
+                // ISA barometric altitude: h = 44330 * (1 - (P/P0)^0.1903)
+                if (flightData.baroPress > 500.0f && flightData.baroPress < 1100.0f) {
+                    flightData.baroAlt = 44330.0f * (1.0f - powf(flightData.baroPress / 1013.25f, 0.1903f));
+                    flightData.has_baroAlt = true;
+                }
             }
             
             if (hasLatUpper && hasLatLower) {
@@ -385,21 +482,38 @@ void taskUIDraw(void* pvParameters) {
 
         // Determine current flight parameters
         float current_speed = flightData.has_pitotPress32 ? flightData.pitotPress32 : 0.0f;
-        float current_pitch = flightData.has_gyro ? flightData.gyro[0] : 0.0f;
-        float current_roll = flightData.has_gyro ? flightData.gyro[1] : 0.0f;
-        float current_alt = flightData.has_altLidar ? flightData.altLidar : (flightData.has_altUS ? flightData.altUS : 0.0f);
+
+        // ATT: メインIMUが優先, 無ければピトーノードの傾斜角を使用
+        float current_pitch, current_roll;
+        if (flightData.has_mainIMU) {
+            current_pitch = flightData.mainPitch;
+            current_roll  = flightData.mainRoll;
+        } else if (flightData.has_pitotAtt) {
+            current_pitch = flightData.pitotPitch;
+            current_roll  = flightData.pitotRoll;
+        } else {
+            current_pitch = 0.0f;
+            current_roll  = 0.0f;
+        }
+        bool has_att = flightData.has_mainIMU || flightData.has_pitotAtt;
+
+        // ALT: LiDAR > 超音波 > 気圧高度 の順で優先
+        float current_alt;
+        if (flightData.has_altLidar) {
+            current_alt = flightData.altLidar;
+        } else if (flightData.has_altUS) {
+            current_alt = flightData.altUS;
+        } else if (flightData.has_baroAlt) {
+            current_alt = flightData.baroAlt;
+        } else {
+            current_alt = 0.0f;
+        }
         uint16_t current_hdg = flightData.gpsHeading % 360;
 
         // --- 0. Top Telemetry Status Strip ---
         tft.setTextSize(1);
         tft.setTextColor(ILI9341_WHITE, ILI9341_BLACK);
-        tft.setCursor(10, 3);
-        if (flightData.has_batteryVolt) {
-            tft.printf("BAT: %5.2f V", flightData.batteryVolt);
-        } else {
-            tft.print("BAT: No Data");
-        }
-        
+
         tft.setCursor(120, 3);
         if (flightData.has_rudderAngle) {
             tft.printf("RUD: %+5.1f d", flightData.rudderAngle);
@@ -437,23 +551,28 @@ void taskUIDraw(void* pvParameters) {
 
         // --- 2. AI (Attitude Indicator) Draw/Erase ---
         if (prevDraw.pitch != -999.0f) {
-            float prev_pitch_rad = prevDraw.pitch * DEG_TO_RAD;
             float prev_roll_rad = prevDraw.roll * DEG_TO_RAD;
             float prev_dy = constrain(prevDraw.pitch, -25.0f, 25.0f);
-            float prev_cx = 160.0f - prev_dy * sin(prev_roll_rad);
-            float prev_cy = 65.0f + prev_dy * cos(prev_roll_rad);
-            float prev_dx = 28.0f * cos(prev_roll_rad);
-            float prev_dz = 28.0f * sin(prev_roll_rad);
-            tft.drawLine((int)(prev_cx - prev_dx), (int)(prev_cy - prev_dz), (int)(prev_cx + prev_dx), (int)(prev_cy + prev_dz), ILI9341_BLACK);
+            float prev_cx = 160.0f - prev_dy * sinf(prev_roll_rad);
+            float prev_cy = 65.0f  + prev_dy * cosf(prev_roll_rad);
+            float prev_dx = 28.0f * cosf(prev_roll_rad);
+            float prev_dz = 28.0f * sinf(prev_roll_rad);
+            tft.drawLine((int)(prev_cx - prev_dx), (int)(prev_cy - prev_dz),
+                         (int)(prev_cx + prev_dx), (int)(prev_cy + prev_dz), ILI9341_BLACK);
         }
-        float new_pitch_rad = current_pitch * DEG_TO_RAD;
-        float new_roll_rad = current_roll * DEG_TO_RAD;
-        float new_dy = constrain(current_pitch, -25.0f, 25.0f);
-        float new_cx = 160.0f - new_dy * sin(new_roll_rad);
-        float new_cy = 65.0f + new_dy * cos(new_roll_rad);
-        float new_dx = 28.0f * cos(new_roll_rad);
-        float new_dz = 28.0f * sin(new_roll_rad);
-        tft.drawLine((int)(new_cx - new_dx), (int)(new_cy - new_dz), (int)(new_cx + new_dx), (int)(new_cy + new_dz), ILI9341_CYAN);
+        if (has_att) {
+            float new_roll_rad = current_roll * DEG_TO_RAD;
+            float new_dy = constrain(current_pitch, -25.0f, 25.0f);
+            float new_cx = 160.0f - new_dy * sinf(new_roll_rad);
+            float new_cy = 65.0f  + new_dy * cosf(new_roll_rad);
+            float new_dx = 28.0f * cosf(new_roll_rad);
+            float new_dz = 28.0f * sinf(new_roll_rad);
+            tft.drawLine((int)(new_cx - new_dx), (int)(new_cy - new_dz),
+                         (int)(new_cx + new_dx), (int)(new_cy + new_dz), ILI9341_CYAN);
+        } else {
+            // データなし: 水平線をグレーで表示
+            tft.drawLine(132, 65, 188, 65, ILI9341_DARKGREY);
+        }
 
         // Redraw Aircraft symbol (Yellow)
         tft.drawLine(152, 65, 168, 65, ILI9341_YELLOW);
@@ -567,24 +686,26 @@ void taskUIDraw(void* pvParameters) {
         tft.setCursor(220, 130);
         tft.print("CAN STATUS:");
         
-        drawNodeStatus(220, 142, "MN", lastRxMain);
-        drawNodeStatus(265, 142, "PT", lastRxPitot);
+        drawNodeStatus(220, 140, "MN", lastHbMain,     lastRxMain);
+        drawNodeStatus(268, 140, "AL", lastHbAlt,      lastRxAlt);
         
-        drawNodeStatus(220, 154, "RD", lastRxRudder);
-        drawNodeStatus(265, 154, "GP", lastRxGPS);
+        drawNodeStatus(220, 150, "PT", lastHbPitot,    lastRxPitot);
         
-        drawNodeStatus(220, 166, "AL", lastRxAlt);
-        drawNodeStatus(265, 166, "SB", lastRxBridge);
+        drawNodeStatus(220, 160, "RD", lastHbRudder,   lastRxRudder);
+        drawNodeStatus(268, 160, "EV", lastHbElevator, lastRxElevator);
+        
+        drawNodeStatus(220, 170, "GP", lastHbGPS,      lastRxGPS);
+        drawNodeStatus(268, 170, "SP", lastHbBridge,   lastRxBridge);
 
         tft.setTextColor(ILI9341_WHITE, ILI9341_BLACK);
-        tft.setCursor(220, 182);
-        tft.printf("MAP:%s ", useArakawaMap ? "TMCIT" : "SHIGA");
+        tft.setCursor(220, 185);
+        tft.printf("MAP:%s     ", useArakawaMap ? "TMCIT" : "SHIGA");
         
-        tft.setCursor(220, 194);
+        tft.setCursor(220, 198);
         if (flightData.has_gpsPos) {
-            tft.printf("SPD:%4.1f", flightData.gpsSpeed);
+            tft.printf("SPD:%4.1f ", flightData.gpsSpeed);
         } else {
-            tft.print("SPD: No G");
+            tft.print("SPD: No G ");
         }
 
         // Update previous values for next refresh cycle
@@ -601,11 +722,17 @@ void taskUIDraw(void* pvParameters) {
         // Teleplot output
         if (flightData.has_batteryVolt) Serial.printf(">disp_bat:%.2f\n", flightData.batteryVolt);
         if (flightData.has_pitotPress32) Serial.printf(">disp_airspeed:%.2f\n", flightData.pitotPress32);
-        if (flightData.has_altLidar) Serial.printf(">disp_alt_lidar:%.2f\n", flightData.altLidar);
-        if (flightData.has_altUS) Serial.printf(">disp_alt_us:%.2f\n", flightData.altUS);
-        if (flightData.has_gyro) {
-            Serial.printf(">disp_pitch:%.2f\n", flightData.gyro[0]);
-            Serial.printf(">disp_roll:%.2f\n", flightData.gyro[1]);
+        if (flightData.has_altLidar)  Serial.printf(">disp_alt_lidar:%.2f\n", flightData.altLidar);
+        if (flightData.has_altUS)     Serial.printf(">disp_alt_us:%.2f\n", flightData.altUS);
+        if (flightData.has_baroAlt)   Serial.printf(">disp_baro_alt:%.2f\n", flightData.baroAlt);
+        if (has_att) {
+            Serial.printf(">disp_pitch:%.2f\n", current_pitch);
+            Serial.printf(">disp_roll:%.2f\n",  current_roll);
+        }
+        if (flightData.has_mainIMU) {
+            Serial.printf(">disp_acc_x:%.3f\n", flightData.accel[0]);
+            Serial.printf(">disp_acc_y:%.3f\n", flightData.accel[1]);
+            Serial.printf(">disp_acc_z:%.3f\n", flightData.accel[2]);
         }
         if (flightData.has_rudderAngle) Serial.printf(">disp_rudder:%.2f\n", flightData.rudderAngle);
         if (flightData.has_gpsPos) {

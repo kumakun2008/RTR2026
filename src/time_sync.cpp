@@ -18,6 +18,7 @@ SemaphoreHandle_t TimeSync::_timeMutex = NULL;
 
 GPSPayload TimeSync::_latestGPSData = { 0.0, 0.0, 0.0f, 0.0f, 0, 0, 0, 0.0f };
 volatile bool TimeSync::_hasFreshGPS = false;
+volatile bool TimeSync::_hasValidCoord = false;  // RMC A=Active で座標が有効かどうか
 static volatile uint32_t s_lastDualAntennaHeadingMs = 0;
 
 TimeSync::TimeSync()
@@ -90,7 +91,7 @@ bool TimeSync::getGPSData(GPSPayload& payload) {
 
 void TimeSync::gpsParseTask(void* pvParameters) {
     TimeSync* sync = (TimeSync*)pvParameters;
-    char buffer[128];
+    char buffer[256];  // 256B: UM982Cの長文NMEA対応
     int idx = 0;
     
     while (true) {
@@ -133,24 +134,27 @@ void TimeSync::parseNMEA(const char* sentence) {
         }
         
         if (fieldCount < 10) return;
-        if (fields[2][0] != 'A') return; // Status: A=active, V=void
-        
+
         const char* timeStr = fields[1];
-        const char* latStr = fields[3];
-        const char* latDir = fields[4];
-        const char* lonStr = fields[5];
-        const char* lonDir = fields[6];
+        const char* statusStr = fields[2];  // A=Active, V=Void
+        const char* latStr  = fields[3];
+        const char* latDir  = fields[4];
+        const char* lonStr  = fields[5];
+        const char* lonDir  = fields[6];
         const char* speedKnotsStr = fields[7];
-        const char* courseStr = fields[8];
-        const char* dateStr = fields[9];
-        
-        double latVal = parseDegrees(latStr, latDir);
-        double lonVal = parseDegrees(lonStr, lonDir);
-        float speedMs = atof(speedKnotsStr) * 0.514444f; // knots to m/s
-        float headingDeg = atof(courseStr);
-        
-        // Update JST clock offset (UTC + 9 hours) using PPS interrupt sync
-        if (_ppsTriggered) {
+        const char* courseStr     = fields[8];
+        const char* dateStr       = fields[9];
+
+        // --- 時刻は Active / Void 問わず更新 ---
+        float utcFloat = atof(timeStr);
+        int hh  = (int)(utcFloat / 10000.0);
+        int mm  = ((int)(utcFloat / 100.0)) % 100;
+        float ss = fmod(utcFloat, 100.0);
+        int jstH = (hh + 9) % 24;
+        float jstTime = jstH * 10000.0f + mm * 100.0f + ss;
+
+        // PPS 同期 (Active でなくても時刻は信頼できる)
+        if (_ppsTriggered && strlen(timeStr) >= 6 && strlen(dateStr) >= 6) {
             uint64_t utcEpochUs = convertNMEAToEpochUs(timeStr, dateStr);
             if (utcEpochUs > 0) {
                 uint64_t jstEpochUs = utcEpochUs + (9ULL * 3600ULL * 1000000ULL);
@@ -162,27 +166,30 @@ void TimeSync::parseNMEA(const char* sentence) {
             }
             _ppsTriggered = false;
         }
-        
-        // Convert UTC time to JST for display/CAN transmission
-        float utcFloat = atof(timeStr);
-        int hh = (int)(utcFloat / 10000.0);
-        int mm = ((int)(utcFloat / 100.0)) % 100;
-        float ss = fmod(utcFloat, 100.0);
-        int jstH = (hh + 9) % 24;
-        float jstTime = jstH * 10000.0f + mm * 100.0f + ss;
-        
-        // Update cache
+
         if (xSemaphoreTake(_timeMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-            _latestGPSData.latitude = latVal;
-            _latestGPSData.longitude = lonVal;
-            _latestGPSData.speed = speedMs;
             _latestGPSData.utc = jstTime;
-            _hasFreshGPS = true;
-            
-            // Only update heading from RMC if dual-antenna heading hasn't updated in 3 seconds
-            if (millis() - s_lastDualAntennaHeadingMs > 3000) {
-                _latestGPSData.heading = (uint16_t)(headingDeg * 100.0f);
+
+            if (statusStr[0] == 'A') {
+                // Active: 座標・速度・進行方向を更新
+                double latVal  = parseDegrees(latStr, latDir);
+                double lonVal  = parseDegrees(lonStr, lonDir);
+                float speedMs  = atof(speedKnotsStr) * 0.514444f;
+                float headingDeg = atof(courseStr);
+
+                _latestGPSData.latitude  = latVal;
+                _latestGPSData.longitude = lonVal;
+                _latestGPSData.speed     = speedMs;
+                _hasValidCoord = true;
+
+                if (millis() - s_lastDualAntennaHeadingMs > 3000) {
+                    _latestGPSData.heading = (uint16_t)(headingDeg * 100.0f);
+                }
+            } else {
+                // Void: 座標無効フラグのみ落とす（古い座標はそのまま保持）
+                _hasValidCoord = false;
             }
+            _hasFreshGPS = true;  // 時刻・RMC受信自体は常にフレッシュ
             xSemaphoreGive(_timeMutex);
         }
     }

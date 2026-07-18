@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <Wire.h>
-#include "driver/twai.h"
+#include "can_protocol.hpp"
+#include "can_manager.hpp"
 
 // TSD20 Lidar
 #define TSD_RX 6  // 基板上のD4 (GPIO6)
@@ -8,13 +9,12 @@
 #define OFFSET_CORRECTION 0  // 補正値
 
 // URM37v5.0 Ultrasonic Sensor
-#define URM_ECHO_PIN 2  // 基板上のD0 (GPIO2)
-#define URM_TRIG_PIN 3  // 基板上のD1 (GPIO3)
+#define URM_ECHO_PIN 3  // 基板上のD0 (GPIO2)
+#define URM_TRIG_PIN 4  // 基板上のD2 (GPIO4) (Corrected based on altimeter.txt)
 
 // CAN GPIO Pins
-#define CAN_TX_PIN GPIO_NUM_20
-#define CAN_RX_PIN GPIO_NUM_21
-// Note: CAN_STB (MCP2561 pin 8) is hardware-grounded - no software control needed
+#define CAN_TX_PIN 20
+#define CAN_RX_PIN 21
 
 // CAN IDs (11-bit standard)
 #define LIDAR_CAN_ID      0x100
@@ -26,12 +26,28 @@ volatile uint8_t i2cRegisterPointer = 0x00;
 
 // Shared data variables
 volatile uint16_t lidarDistance_mm = 0;
-volatile uint16_t ultrasoundDistance_cm = 0; // uint16_t: max 65535cm (Fix #5: uint8_t overflowed beyond 255cm/2.55m)
+volatile uint16_t ultrasoundDistance_cm = 0; // uint16_t: max 65535cm
+
+// CAN Manager Instance
+CANManager canBus;
+
+// TSD20受信バッファ (From altimeter.txt)
+uint8_t rxBuffer[4];
+uint8_t bufferIndex = 0;
+bool packetStarted = false;
+
+// TSD20 チェックサム計算 (From altimeter.txt)
+uint8_t calculateChecksum(uint8_t *_pbuff, uint16_t _cmdLen) {
+    uint8_t cmd_sum = 0;
+    for (uint16_t i = 0; i < _cmdLen; i++) {
+        cmd_sum += _pbuff[i];
+    }
+    return ~cmd_sum;
+}
 
 void onI2CReceive(int numBytes) {
     if (numBytes > 0) {
         i2cRegisterPointer = Wire.read();
-        // Discard any additional bytes written
         while (Wire.available()) {
             Wire.read();
         }
@@ -44,7 +60,7 @@ void onI2CRequest() {
     uint8_t buffer[5];
     buffer[0] = (lidarDistance_mm >> 8) & 0xFF;
     buffer[1] = lidarDistance_mm & 0xFF;
-    buffer[2] = (ultrasoundDistance_cm >> 8) & 0xFF; // Fix #5: uint16_t split
+    buffer[2] = (ultrasoundDistance_cm >> 8) & 0xFF;
     buffer[3] = ultrasoundDistance_cm & 0xFF;
     buffer[4] = 0xAA; // Normal status flag
 
@@ -57,42 +73,18 @@ void onI2CRequest() {
 }
 
 void initCAN() {
-    twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(CAN_TX_PIN, CAN_RX_PIN, TWAI_MODE_NORMAL);
-    
-    // 1Mbps - confirmed working baud rate (ref: message.txt altimeter test code)
-    twai_timing_config_t t_config = TWAI_TIMING_CONFIG_1MBITS();
-    twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
-
-    if (twai_driver_install(&g_config, &t_config, &f_config) == ESP_OK) {
-        Serial.println("[OK] TWAI (CAN) Driver Installed");
+    if (canBus.begin(CAN_TX_PIN, CAN_RX_PIN)) {
+        Serial.println("[OK] CAN Bus Driver Active (1Mbps)");
     } else {
-        Serial.println("[ERR] Failed to install TWAI Driver");
-        return;
-    }
-
-    if (twai_start() == ESP_OK) {
-        Serial.println("[OK] TWAI (CAN) Driver Started");
-    } else {
-        Serial.println("[ERR] Failed to start TWAI Driver");
+        Serial.println("[ERROR] CAN Bus Initialization Failed!");
     }
 }
 
 void sendSensorData(uint32_t id, const uint8_t* data, uint8_t dlc) {
-    twai_message_t message = {};
-    message.identifier = id;
-    message.extd = 0;
-    message.rtr = 0;
-    message.data_length_code = dlc;
-    
-    for (int i = 0; i < dlc; i++) {
-        message.data[i] = data[i];
-    }
-
-    esp_err_t res = twai_transmit(&message, pdMS_TO_TICKS(0)); // Non-blocking: matches confirmed working code (message.txt)
-    if (res == ESP_OK) {
+    if (canBus.transmitRaw(id, data, dlc)) {
         Serial.printf("[TX] Sent to ID 0x%03X, DLC: %d\n", id, dlc);
     } else {
-        Serial.printf("[TX ERR] Failed to send to ID 0x%03X (Error: %d)\n", id, res);
+        Serial.printf("[TX ERR] Failed to send to ID 0x%03X\n", id);
     }
 }
 
@@ -101,37 +93,50 @@ void setup() {
     delay(2000);
     Serial.println("--- Altimeter Node (ESP32-C3) Init ---");
 
-    // Initialize TSD20 Lidar Serial at 460800 bps
+    // Initialize TSD20 Lidar Serial at 460800 bps with expanded buffer (From altimeter.txt)
+    Serial1.setRxBufferSize(2048); 
     Serial1.begin(460800, SERIAL_8N1, TSD_RX, TSD_TX);
 
-    // Initialize URM37v5.0 Pins
+    // Initialize URM37v5.0 Pins (Wait-HIGH, From altimeter.txt)
     pinMode(URM_TRIG_PIN, OUTPUT);
     pinMode(URM_ECHO_PIN, INPUT);
-    digitalWrite(URM_TRIG_PIN, LOW);
+    digitalWrite(URM_TRIG_PIN, HIGH);
 
-    // Initialize I2C Slave at 0x30 (per altimeter_spec.md)
+    // Initialize I2C Slave at 0x30
     Wire.begin(I2C_SLAVE_ADDR);
     Wire.onReceive(onI2CReceive);
     Wire.onRequest(onI2CRequest);
     Serial.println("[OK] I2C Slave initialized at 0x30");
 
-    // Initialize CAN (500kbps)
-    // STB pin is hardware-grounded on this PCB, so transceiver is always in Normal mode
+    // Initialize CAN
     initCAN();
 }
 
 void loop() {
-    // 1. Read and parse Serial stream from TSD20 Lidar
-    while (Serial1.available() >= 4) {
-        if (Serial1.read() == 0x5C) {
-            uint8_t dL = Serial1.read();
-            uint8_t dH = Serial1.read();
-            uint8_t chk = Serial1.read(); // checksum (ignored)
-
-            uint16_t rawDistance = (uint16_t)((dH << 8) | dL);
-            if (rawDistance != 50000) { // filter out-of-bounds readings
-                int corrected = (int)rawDistance + OFFSET_CORRECTION;
-                lidarDistance_mm = (corrected < 0) ? 0 : (uint16_t)corrected;
+    // 1. Read and parse Serial stream from TSD20 Lidar (Robust parser, From altimeter.txt)
+    while (Serial1.available() > 0) {
+        uint8_t inByte = Serial1.read();
+        
+        if (!packetStarted) {
+            if (inByte == 0x5C) {
+                rxBuffer[0] = inByte;
+                bufferIndex = 1;
+                packetStarted = true;
+            }
+        } else {
+            rxBuffer[bufferIndex++] = inByte;
+            
+            if (bufferIndex >= 4) {
+                packetStarted = false; 
+                
+                uint8_t checksum = calculateChecksum(&rxBuffer[1], 2);
+                if (checksum == rxBuffer[3]) {
+                    uint16_t rawDistance = (uint16_t)((rxBuffer[2] << 8) | rxBuffer[1]);
+                    if (rawDistance != 50000) {
+                        int correctedDistance = (int)rawDistance + OFFSET_CORRECTION;
+                        lidarDistance_mm = (correctedDistance < 0) ? 0 : (uint16_t)correctedDistance;
+                    }
+                }
             }
         }
     }
@@ -141,15 +146,15 @@ void loop() {
     if (millis() - lastMeasurement >= 500) {
         lastMeasurement = millis();
 
-        // URM37v5.0 trigger pulse
-        digitalWrite(URM_TRIG_PIN, HIGH);
-        delayMicroseconds(10);
+        // URM37v5.0 trigger pulse (Wait-HIGH, From altimeter.txt)
         digitalWrite(URM_TRIG_PIN, LOW);
+        delayMicroseconds(10);
+        digitalWrite(URM_TRIG_PIN, HIGH);
 
-        long duration = pulseIn(URM_ECHO_PIN, HIGH, 30000); // 30ms timeout (approx 5m range)
-        if (duration > 0) {
-            float urm_mm = duration * 0.17f;
-            uint16_t cm = (uint16_t)(urm_mm / 10.0f); // Fix #5: uint16_t to support up to 500cm (5m)
+        long duration = pulseIn(URM_ECHO_PIN, LOW, 30000); 
+        if (duration > 0 && duration < 30000) {
+            float urm_mm = duration * 0.2f; 
+            uint16_t cm = (uint16_t)(urm_mm / 10.0f);
             ultrasoundDistance_cm = cm;
         } else {
             ultrasoundDistance_cm = 0; // out of range
@@ -162,7 +167,6 @@ void loop() {
         sendSensorData(LIDAR_CAN_ID, lidarData, 2);
 
         // Broadcast Ultrasonic range via CAN ID 0x101
-        // Fix #5: Send uint16_t as big-endian 2 bytes (matches lidar format)
         uint8_t ultraData[2];
         ultraData[0] = (ultrasoundDistance_cm >> 8) & 0xFF;
         ultraData[1] = ultrasoundDistance_cm & 0xFF;
@@ -171,5 +175,17 @@ void loop() {
         // Teleplot Output
         Serial.printf(">alt_lidar:%d\n", lidarDistance_mm);
         Serial.printf(">alt_ultrasonic:%d\n", ultrasoundDistance_cm);
+    }
+
+    // 1Hz CAN Heartbeat
+    static uint32_t lastHBalt = 0;
+    if (millis() - lastHBalt >= 1000) {
+        lastHBalt = millis();
+        uint8_t hbPayload = NODE_ID_ALT;
+        if (canBus.transmitRaw(CAN_ID_HB_ALT, &hbPayload, 1)) {
+            Serial.println("[HB] Altimeter node alive");
+        } else {
+            Serial.println("[HB ERR] Altimeter heartbeat failed");
+        }
     }
 }

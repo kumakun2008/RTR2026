@@ -222,6 +222,13 @@ void taskCANReceive(void* pvParameters) {
             }
         }
 
+        static uint32_t lastHBspeaker = 0;
+        if (now - lastHBspeaker >= 1000) {
+            lastHBspeaker = now;
+            uint8_t hbPayload = NODE_ID_SPEAKER;
+            canBus.transmitRaw(CAN_ID_HB_SPEAKER, &hbPayload, 1);
+        }
+
         vTaskDelay(pdMS_TO_TICKS(1));
     }
 }

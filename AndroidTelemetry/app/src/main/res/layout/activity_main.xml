@@ -255,7 +255,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="match_parent"
                         android:columnCount="2"
-                        android:rowCount="3"
+                        android:rowCount="4"
                         android:alignmentMode="alignMargins"
                         android:columnOrderPreserved="false">
 
@@ -348,7 +348,40 @@
                             android:layout_rowWeight="1"
                             android:layout_margin="3dp"
                             android:background="@android:color/holo_red_dark"
-                            android:text="SB"
+                            android:text="SP"
+                            android:textColor="@color/text_primary"
+                            android:textStyle="bold"
+                            android:textSize="11sp"
+                            android:gravity="center"
+                            android:padding="4dp" />
+
+                        <!-- Ladder Board (Hidden) -->
+                        <TextView
+                            android:id="@+id/tvNodeLadder"
+                            android:visibility="gone"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_columnWeight="1"
+                            android:layout_rowWeight="1"
+                            android:layout_margin="3dp"
+                            android:background="@android:color/holo_red_dark"
+                            android:text="LD"
+                            android:textColor="@color/text_primary"
+                            android:textStyle="bold"
+                            android:textSize="11sp"
+                            android:gravity="center"
+                            android:padding="4dp" />
+
+                        <!-- Elevator Board -->
+                        <TextView
+                            android:id="@+id/tvNodeElevator"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_columnWeight="1"
+                            android:layout_rowWeight="1"
+                            android:layout_margin="3dp"
+                            android:background="@android:color/holo_red_dark"
+                            android:text="EV"
                             android:textColor="@color/text_primary"
                             android:textStyle="bold"
                             android:textSize="11sp"

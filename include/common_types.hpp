@@ -136,6 +136,8 @@ enum LogSensorID : uint8_t {
     LOG_ID_GPS           = 0x06,
     LOG_ID_ALTIMETER     = 0x07,
     LOG_ID_RUDDER        = 0x08,
+    LOG_ID_LADDER        = 0x09,
+    LOG_ID_ELEVATOR      = 0x0A,
     LOG_ID_EVENT_MARK    = 0xFF  ///< System events, calibration triggers, OTA markers, etc.
 };
 

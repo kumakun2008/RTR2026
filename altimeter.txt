@@ -1,114 +1,50 @@
 #include <Arduino.h>
 #include "driver/twai.h"
-// TSD20
+
+#define LIDAR_CAN_ID 0x100
+#define ULTRASONIC_CAN_ID 0x101
+
+// 受信側のCAN通信速度に合わせて 1 または 0 にしてください
+// 1 = 1Mbps (1000kbps) / 0 = 500kbps
+#define USE_1MBPS_SPEED    1 
+
+// TSD20 (Lidar)
 #define TSD_RX 6  // 基板上のD4 (GPIO6)
 #define TSD_TX 7  // 基板上のD5 (GPIO7)
-#define OFFSET_CORRECTION 0  // 必要に応じて補正値を設定
+#define OFFSET_CORRECTION 0
 
-// URM37v5.0
-#define URM_ECHO_PIN 3  // 基板上のD0 (GPIO2)
-#define URM_TRIG_PIN 2  // 基板上のD1 (GPIO3)
+// URM37v5.0 (超音波)
+#define URM_ECHO_PIN 2
+#define URM_TRIG_PIN 4  
 
-// CAN
+// CAN GPIO Pins (ESP32-C3)
 #define CAN_TX_PIN GPIO_NUM_20
 #define CAN_RX_PIN GPIO_NUM_21
 
-// 送信先CANアドレス（標準ID: 11bit）
-const int lidarCANaddr = 0x01;
-const int ultSoundCANaddr = 0x02;
-/*
-void setup() {
-  // パソコンとの通信用シリアル
-  Serial.begin(115200);
-  
-  // TSD20用シリアル (指定の460800bps、ピンを割り当て)
-  Serial1.begin(460800, SERIAL_8N1, TSD_RX, TSD_TX);
-  
-  // URM37v5.0用 GPIOピン設定
-  pinMode(URM_TRIG_PIN, OUTPUT);
-  pinMode(URM_ECHO_PIN, INPUT);
-  digitalWrite(URM_TRIG_PIN, LOW);
+// 共有データ変数 (メートル単位の float 値が格納されます)
+volatile float lidarDistance_m = 0.0f;
+volatile float ultrasoundDistance_m = 0.0f;
 
-  delay(2000);
-  Serial.println("==========================================");
-  Serial.println("Sensor Monitor (TSD20 Lidar & URM37v5.0)");
-  Serial.println("==========================================");
-}
+// TSD20受信バッファ
+uint8_t rxBuffer[4];
+uint8_t bufferIndex = 0;
+bool packetStarted = false;
 
-void loop() {
-  // ----------------------------------------------------
-  // 1. TSD20 (Lidar) の計測・パース処理
-  // ----------------------------------------------------
-  if (Serial1.available() >= 4) {
-    if (Serial1.read() == 0x5C) {
-      uint8_t dL = Serial1.read();
-      uint8_t dH = Serial1.read();
-      uint8_t receivedSum = Serial1.read(); // チェックサム（必要に応じて検証用）
-
-      uint16_t rawDistance = (uint16_t)((dH << 8) | dL);
-
-      Serial.print("[TSD20 Lidar] ");
-      if (rawDistance == 50000) {
-        Serial.println("Range: Out of bounds");
-      } else {
-        int correctedDistance = (int)rawDistance + OFFSET_CORRECTION;
-        if (correctedDistance < 0) correctedDistance = 0;
-
-        Serial.print("Distance: ");
-        Serial.print(correctedDistance);
-        Serial.println(" mm");
-      }
-    }
-  }
-
-  // ----------------------------------------------------
-  // 2. URM37v5.0 (超音波) の計測処理（定期実行用の簡易タイマー）
-  // ----------------------------------------------------
-  static unsigned long lastURMTime = 0;
-  // 500ms（0.5秒）ごとに超音波センサをトリガーする
-  if (millis() - lastURMTime >= 500) {
-    lastURMTime = millis();
-
-    // トリガーパルス出力
-    digitalWrite(URM_TRIG_PIN, HIGH);
-    delayMicroseconds(10);
-    digitalWrite(URM_TRIG_PIN, LOW);
-
-    // パルス幅計測 (タイムアウト30ms = 約5m)
-    long duration = pulseIn(URM_ECHO_PIN, HIGH, 30000); 
-    
-    Serial.print("[URM37v5.0]   ");
-    if (duration == 0) {
-      Serial.println("Distance: Out of range (Error)");
-    } else {
-      // 往復時間から距離(mm)を計算 
-      // (音速 340m/s = 0.34mm/us。往復なので2で割る => 0.17)
-      float urm_distance_mm = duration * 0.17; 
-      
-      Serial.print("Distance: ");
-      Serial.print(urm_distance_mm, 1); // 小数点第1位まで表示
-      Serial.println(" mm");
-    }
-    Serial.println("------------------------------------------");
-  }
-}
-*/
-
-// 各センサへ送る模擬データ用の変数
-uint16_t simulatedLidarRange = 1200;  // 1200mm (1.2m)
-uint16_t simulatedUltSoundDist = 85;  // 85cm
-
+// CAN (TWAI) の初期化（変更なし）
 void initCAN() {
-    // TWAI（CAN）コントローラの初期化設定
     twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(CAN_TX_PIN, CAN_RX_PIN, TWAI_MODE_NORMAL);
-    
-    // 通信速度の設定 (ここではロボティクス等で一般的な 500kbps に設定)
-    twai_timing_config_t t_config = TWAI_TIMING_CONFIG_500KBITS();
-    
-    // フィルター設定 (すべてのIDを受け入れる)
     twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
+    twai_timing_config_t t_config;
 
-    // ドライバーのインストール
+    // 通信速度の設定を切り替え
+    #if USE_1MBPS_SPEED
+        t_config = TWAI_TIMING_CONFIG_1MBITS();
+        Serial.println("[CAN] Configured to 1Mbps");
+    #else
+        t_config = TWAI_TIMING_CONFIG_500KBITS();
+        Serial.println("[CAN] Configured to 500kbps");
+    #endif
+
     if (twai_driver_install(&g_config, &t_config, &f_config) == ESP_OK) {
         Serial.println("[OK] TWAI (CAN) Driver Installed");
     } else {
@@ -116,7 +52,6 @@ void initCAN() {
         return;
     }
 
-    // CAN通信の開始
     if (twai_start() == ESP_OK) {
         Serial.println("[OK] TWAI (CAN) Driver Started");
     } else {
@@ -124,59 +59,122 @@ void initCAN() {
     }
 }
 
-void sendSensorData(uint32_t id, uint8_t* data, uint8_t dlc) {
-    twai_message_t message;
-    message.identifier = id;           // 送信先CAN ID
-    message.extd = 0;                  // 0: 標準ID(11bit), 1: 拡張ID(29bit)
-    message.rtr = 0;                   // 0: データフレーム, 1: リモートフレーム
-    message.data_length_code = dlc;    // データ長 (0〜8バイト)
+// CAN メッセージ送信（関数自体は変更なし・タイムアウト0ms）
+void sendSensorData(uint32_t id, const uint8_t* data, uint8_t dlc) {
+    twai_message_t message = {};
+    message.identifier = id;
+    message.extd = 0;
+    message.rtr = 0;
+    message.data_length_code = dlc;
     
-    // データのコピー
     for (int i = 0; i < dlc; i++) {
         message.data[i] = data[i];
     }
 
-    // 待ち時間なし（明示的なノンブロッキング）で送信キューに入れる
     esp_err_t res = twai_transmit(&message, pdMS_TO_TICKS(0));
     if (res == ESP_OK) {
-        Serial.printf("[TX] Sent to ID 0x%02X, DLC: %d\n", id, dlc);
+        Serial.printf("[TX] Sent to ID 0x%03X, DLC: %d\n", id, dlc);
     } else {
-        Serial.printf("[TX ERR] Failed to send to ID 0x%02X (Error: %d)\n", id, res);
+        Serial.printf("[TX ERR] Failed to send to ID 0x%03X (Error: %d)\n", id, res);
     }
+}
+
+// TSD20 チェックサム計算
+uint8_t calculateChecksum(uint8_t *_pbuff, uint16_t _cmdLen) {
+    uint8_t cmd_sum = 0;
+    for (uint16_t i = 0; i < _cmdLen; i++) {
+        cmd_sum += _pbuff[i];
+    }
+    return ~cmd_sum;
 }
 
 void setup() {
     Serial.begin(115200);
-    delay(2000); // シリアル表示が間に合うように少し待つ
-    Serial.println("--- ESP32 TWAI (CAN) TX Test ---");
+    delay(2000);
+    Serial.println("--- Altimeter Node (ESP32-C3) Sender Init ---");
 
+    // TSD20用高速シリアル (バッファサイズを2048バイトに拡張して溢れを防止)
+    Serial1.setRxBufferSize(2048); 
+    Serial1.begin(460800, SERIAL_8N1, TSD_RX, TSD_TX);
+
+    // 超音波ピン初期化（待機時HIGH）
+    pinMode(URM_TRIG_PIN, OUTPUT);
+    pinMode(URM_ECHO_PIN, INPUT);
+    digitalWrite(URM_TRIG_PIN, HIGH); 
+
+    // CAN (TWAI) 初期化
     initCAN();
 }
 
 void loop() {
-    // ---- 1. LiDAR 宛てのデータ作成と送信 ----
-    // 例として2バイト（16bit）の距離データを 上位・下位バイトに分解して送る
-    uint8_t lidarData[2];
-    lidarData[0] = (simulatedLidarRange >> 8) & 0xFF; // 上位バイト
-    lidarData[1] = simulatedLidarRange & 0xFF;        // 下位バイト
-    
-    sendSensorData(lidarCANaddr, lidarData, 2);
+    // ----------------------------------------------------
+    // 1. TSD20 (Lidar) のパース (常時バックグラウンド処理)
+    // ----------------------------------------------------
+    while (Serial1.available() > 0) {
+        uint8_t inByte = Serial1.read();
+        
+        if (!packetStarted) {
+            if (inByte == 0x5C) {
+                rxBuffer[0] = inByte;
+                bufferIndex = 1;
+                packetStarted = true;
+            }
+        } else {
+            rxBuffer[bufferIndex++] = inByte;
+            
+            if (bufferIndex >= 4) {
+                packetStarted = false; 
+                
+                uint8_t checksum = calculateChecksum(&rxBuffer[1], 2);
+                if (checksum == rxBuffer[3]) {
+                    uint16_t rawDistance = (uint16_t)((rxBuffer[2] << 8) | rxBuffer[1]);
+                    if (rawDistance != 50000) {
+                        int correctedDistance = (int)rawDistance + OFFSET_CORRECTION;
+                        int final_mm = (correctedDistance < 0) ? 0 : correctedDistance;
+                        lidarDistance_m = (float)final_mm / 1000.0f;
+                    }
+                }
+            }
+        }
+    }
 
-    // ---- 2. 超音波センサ 宛てのデータ作成と送信 ----
-    // 例として1バイトの距離データと、適当なステータス（例: 0xAA）を送る
-    uint8_t ultSoundData[2];
-    ultSoundData[0] = simulatedUltSoundDist & 0xFF;
-    ultSoundData[1] = 0xAA; // 正常ステータスを示すダミー値
-    
-    sendSensorData(ultSoundCANaddr, ultSoundData, 2);
+    // ----------------------------------------------------
+    // 2. 超音波の計測 ＆ CANデータ定期送信 (500ms周期)
+    // ----------------------------------------------------
+    static uint32_t lastMeasurement = 0;
+    if (millis() - lastMeasurement >= 500) {
+        lastMeasurement = millis();
 
-    // テスト用に送信する数値を少しずつ変化させる
-    simulatedLidarRange += 5;
-    if (simulatedLidarRange > 5000) simulatedLidarRange = 1000;
+        // --- 超音波センサーの計測 ---
+        digitalWrite(URM_TRIG_PIN, LOW);
+        delayMicroseconds(10); 
+        digitalWrite(URM_TRIG_PIN, HIGH);
 
-    simulatedUltSoundDist += 1;
-    if (simulatedUltSoundDist > 400) simulatedUltSoundDist = 20;
+        // タイムアウトを30msに短縮し、Lidarパースへの影響を最小化
+        long duration = pulseIn(URM_ECHO_PIN, LOW, 30000); 
 
-    // 500ミリ秒（0.5秒）ごとに繰り返し送信
-    delay(500);
+        if (duration == 0 || duration >= 30000) {
+            ultrasoundDistance_m = 0.0f;
+        } else {
+            float ultra_distance_mm = duration * 0.2f; 
+            // mm から メートル(m) に変換して格納
+            ultrasoundDistance_m = ultra_distance_mm / 1000.0f; 
+        }
+
+        // --- CAN 送信処理（データに float メートル値を格納） ---
+        // 1. Lidar送信 (float 4bytes 送信)
+        uint8_t lidarData[4];
+        memcpy(lidarData, (const void*)&lidarDistance_m, 4);
+        sendSensorData(LIDAR_CAN_ID, lidarData, 4);
+
+        // 2. 超音波送信 (4bytes float のメートル値 + 1byte status[0xAA固定] = 計5bytes 送信)
+        uint8_t ultraData[5];
+        memcpy(ultraData, (const void*)&ultrasoundDistance_m, 4);
+        ultraData[4] = 0xAA;
+        sendSensorData(ULTRASONIC_CAN_ID, ultraData, 5);
+
+        // --- デバッグ出力 (m表記) ---
+        Serial.printf(">alt_lidar:%.3f m\n", lidarDistance_m);
+        Serial.printf(">alt_ultrasonic:%.3f m\n", ultrasoundDistance_m);
+    }
 }

@@ -50,6 +50,11 @@ public:
     bool isSynced() const { return _synced; }
 
     /**
+     * @brief Check if last RMC sentence had Active status (valid fix coordinates).
+     */
+    bool hasValidCoord() const { return _hasValidCoord; }
+
+    /**
      * @brief Hardware interrupt service routine for PPS signal.
      */
     static void IRAM_ATTR ppsISR();
@@ -75,6 +80,7 @@ private:
     // Shared GPS data cache
     static GPSPayload _latestGPSData;
     static volatile bool _hasFreshGPS;
+    static volatile bool _hasValidCoord;  ///< true when last RMC was Active
 
     /**
      * @brief Parse a single NMEA line sentence.

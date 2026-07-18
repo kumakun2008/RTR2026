@@ -66,6 +66,20 @@ constexpr uint32_t CAN_ID_MAIN_TEMP     = 0x041;
 constexpr uint32_t CAN_ID_ALT_LIDAR     = 0x100;
 constexpr uint32_t CAN_ID_ALT_US        = 0x101;
 
+// [Node 6] Ladder Board (ESP32-C3 + AS5600)
+constexpr uint32_t CAN_ID_LADDER_ANGLE   = 0x080;  ///< AS5600 raw angle (degrees * 100)
+
+// [Node 7] Elevator Board (ESP32-WROOM-32E + MPU6050)
+constexpr uint32_t CAN_ID_ELEV_PITCH     = 0x090;  ///< Madgwick pitch (degrees * 100)
+constexpr uint32_t CAN_ID_ELEV_ROLL      = 0x091;  ///< Madgwick roll  (degrees * 100)
+constexpr uint32_t CAN_ID_ELEV_YAW       = 0x092;  ///< Madgwick yaw   (degrees * 100)
+constexpr uint32_t CAN_ID_ELEV_ACC_X     = 0x093;
+constexpr uint32_t CAN_ID_ELEV_ACC_Y     = 0x094;
+constexpr uint32_t CAN_ID_ELEV_ACC_Z     = 0x095;
+constexpr uint32_t CAN_ID_ELEV_GYRO_X    = 0x096;
+constexpr uint32_t CAN_ID_ELEV_GYRO_Y    = 0x097;
+constexpr uint32_t CAN_ID_ELEV_GYRO_Z    = 0x098;
+
 // [Node 4] GPS Board
 constexpr uint32_t CAN_ID_GPS_LAT_UPPER = 0x050;
 constexpr uint32_t CAN_ID_GPS_LAT_LOWER = 0x051;
@@ -86,6 +100,28 @@ constexpr uint32_t CAN_ID_SD_STATUS     = 0x071;
 constexpr uint32_t CAN_ID_CALIB_ZERO    = 0x072;
 constexpr uint32_t CAN_ID_VOICE_CMD     = 0x073; // Speaker CMD (Async)
 constexpr uint32_t CAN_ID_OTA_START     = 0x074; // OTA Trigger (Async)
+
+// Node Heartbeat IDs (1Hz, payload = 1 byte node ID)
+// Receiving HB = node is powered and alive (CAN connected)
+// Receiving sensor data IDs = node is actively measuring
+constexpr uint32_t CAN_ID_HB_MAIN      = 0x0F0;  ///< Main Board heartbeat
+constexpr uint32_t CAN_ID_HB_PITOT     = 0x0F1;  ///< Pitot Board heartbeat
+constexpr uint32_t CAN_ID_HB_RUDDER    = 0x0F2;  ///< Rudder Board heartbeat
+constexpr uint32_t CAN_ID_HB_GPS       = 0x0F3;  ///< GPS Board heartbeat
+constexpr uint32_t CAN_ID_HB_ALT       = 0x0F4;  ///< Altimeter Board heartbeat
+constexpr uint32_t CAN_ID_HB_LADDER    = 0x0F5;  ///< Ladder Board heartbeat
+constexpr uint32_t CAN_ID_HB_ELEVATOR  = 0x0F6;  ///< Elevator Board heartbeat
+constexpr uint32_t CAN_ID_HB_SPEAKER   = 0x0F7;  ///< Speaker Board heartbeat
+
+// Node ID byte values used in heartbeat payload
+constexpr uint8_t NODE_ID_MAIN     = 0x01;
+constexpr uint8_t NODE_ID_PITOT    = 0x02;
+constexpr uint8_t NODE_ID_RUDDER   = 0x03;
+constexpr uint8_t NODE_ID_GPS      = 0x04;
+constexpr uint8_t NODE_ID_ALT      = 0x05;
+constexpr uint8_t NODE_ID_LADDER   = 0x06;
+constexpr uint8_t NODE_ID_ELEVATOR = 0x07;
+constexpr uint8_t NODE_ID_SPEAKER  = 0x08;
 
 // Voice alert codes for CAN_ID_VOICE_CMD payload
 enum VoiceAlertCode : uint8_t {

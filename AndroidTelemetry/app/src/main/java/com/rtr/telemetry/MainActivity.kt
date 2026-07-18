@@ -48,12 +48,23 @@ class MainActivity : AppCompatActivity() {
     private var gliderMarker: Marker? = null
 
     // CAN node communication timestamps (from Main Board's millis() reference)
-    private var nodeMainTs = 0L
-    private var nodePitotTs = 0L
-    private var nodeRudderTs = 0L
-    private var nodeGPSTs = 0L
-    private var nodeAltTs = 0L
-    private var nodeBridgeTs = 0L
+    private var rxMainTs = 0L
+    private var rxPitotTs = 0L
+    private var rxRudderTs = 0L
+    private var rxGPSTs = 0L
+    private var rxAltTs = 0L
+    private var rxBridgeTs = 0L
+    private var rxElevatorTs = 0L
+
+    private var hbMainTs = 0L
+    private var hbPitotTs = 0L
+    private var hbRudderTs = 0L
+    private var hbGPSTs = 0L
+    private var hbAltTs = 0L
+    private var hbElevatorTs = 0L
+    private var hbSpeakerTs = 0L
+
+    private var currentMcuTime = 0L
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
@@ -271,64 +282,118 @@ class MainActivity : AppCompatActivity() {
         runOnUiThread {
             logConsole("RX: $line")
 
-            // Format check: $TEL,battery,pressure,altitude,gpsSats,airspeed,pitch,roll,heading,rudder,lat,lon,gpsAlt,lastRxMain,lastRxPitot,lastRxRudder,lastRxGPS,lastRxAlt,lastRxBridge*
-            if (line.startsWith("\$TEL,") && line.endsWith("*")) {
+            // Format check: $TEL2,battery,pressure,... or old $TEL,...
+            if ((line.startsWith("\$TEL2,") || line.startsWith("\$TEL,")) && line.endsWith("*")) {
                 try {
-                    val cleanLine = line.substring(5, line.length - 1)
+                    val isNewFormat = line.startsWith("\$TEL2,")
+                    val prefixLen = if (isNewFormat) 6 else 5
+                    val cleanLine = line.substring(prefixLen, line.length - 1)
                     val tokens = cleanLine.split(",")
-                    if (tokens.size >= 18) {
-                        val bat = tokens[0].toFloatOrNull() ?: 0f
-                        val press = tokens[1].toFloatOrNull() ?: 0f
-                        val alt = tokens[2].toFloatOrNull() ?: 0f
-                        val sats = tokens[3].toIntOrNull() ?: 0
-                        val airspeed = tokens[4].toFloatOrNull() ?: 0f
-                        val pitch = tokens[5].toFloatOrNull() ?: 0f
-                        val roll = tokens[6].toFloatOrNull() ?: 0f
-                        val heading = tokens[7].toIntOrNull() ?: 0
-                        val lat = tokens[9].toDoubleOrNull() ?: 0.0
-                        val lon = tokens[10].toDoubleOrNull() ?: 0.0
+
+                    var bat = 0f
+                    var press = 0f
+                    var alt = 0f
+                    var sats = 0
+                    var airspeed = 0f
+                    var pitch = 0f
+                    var roll = 0f
+                    var heading = 0
+                    var lat = 0.0
+                    var lon = 0.0
+
+                    if (isNewFormat && tokens.size >= 31) {
+                        bat = tokens[0].toFloatOrNull() ?: 0f
+                        press = tokens[1].toFloatOrNull() ?: 0f
+                        alt = tokens[2].toFloatOrNull() ?: 0f
+                        sats = tokens[3].toIntOrNull() ?: 0
+                        airspeed = tokens[4].toFloatOrNull() ?: 0f
+                        pitch = tokens[5].toFloatOrNull() ?: 0f
+                        roll = tokens[6].toFloatOrNull() ?: 0f
+                        heading = tokens[7].toIntOrNull() ?: 0
+                        lat = tokens[9].toDoubleOrNull() ?: 0.0
+                        lon = tokens[10].toDoubleOrNull() ?: 0.0
                         
-                        // Node communication timestamps
-                        nodeMainTs = tokens[12].toLongOrNull() ?: 0L
-                        nodePitotTs = tokens[13].toLongOrNull() ?: 0L
-                        nodeRudderTs = tokens[14].toLongOrNull() ?: 0L
-                        nodeGPSTs = tokens[15].toLongOrNull() ?: 0L
-                        nodeAltTs = tokens[16].toLongOrNull() ?: 0L
-                        nodeBridgeTs = tokens[17].toLongOrNull() ?: 0L
+                        // Node sensor data rx timestamps
+                        rxMainTs = tokens[14].toLongOrNull() ?: 0L
+                        rxPitotTs = tokens[15].toLongOrNull() ?: 0L
+                        rxRudderTs = tokens[16].toLongOrNull() ?: 0L
+                        rxGPSTs = tokens[17].toLongOrNull() ?: 0L
+                        rxAltTs = tokens[18].toLongOrNull() ?: 0L
+                        rxBridgeTs = tokens[19].toLongOrNull() ?: 0L
+                        rxElevatorTs = tokens[21].toLongOrNull() ?: 0L
 
-                        // Update top telemetry strip using Locale.US to avoid format bugs
-                        binding.tvBattery.text = String.format(Locale.US, "BAT: %.2fV", bat)
-                        binding.tvPressure.text = String.format(Locale.US, "BARO: %.1fhPa", press)
-                        binding.tvAltitude.text = String.format(Locale.US, "LALT: %.2fm", alt)
-                        binding.tvGPSSats.text = String.format(Locale.US, "GPS: %d Sat", sats)
+                        // Node heartbeat rx timestamps
+                        hbMainTs = tokens[22].toLongOrNull() ?: 0L
+                        hbPitotTs = tokens[23].toLongOrNull() ?: 0L
+                        hbRudderTs = tokens[24].toLongOrNull() ?: 0L
+                        hbGPSTs = tokens[25].toLongOrNull() ?: 0L
+                        hbAltTs = tokens[26].toLongOrNull() ?: 0L
+                        hbElevatorTs = tokens[28].toLongOrNull() ?: 0L
+                        hbSpeakerTs = tokens[29].toLongOrNull() ?: 0L
 
-                        if (bat < 7.0f) {
-                            binding.tvBattery.setTextColor(ContextCompat.getColor(this, android.R.color.holo_red_light))
+                        currentMcuTime = tokens[30].toLongOrNull() ?: 0L
+                    } else if (tokens.size >= 18) {
+                        // Fallback to old format
+                        bat = tokens[0].toFloatOrNull() ?: 0f
+                        press = tokens[1].toFloatOrNull() ?: 0f
+                        alt = tokens[2].toFloatOrNull() ?: 0f
+                        sats = tokens[3].toIntOrNull() ?: 0
+                        airspeed = tokens[4].toFloatOrNull() ?: 0f
+                        pitch = tokens[5].toFloatOrNull() ?: 0f
+                        roll = tokens[6].toFloatOrNull() ?: 0f
+                        heading = tokens[7].toIntOrNull() ?: 0
+                        lat = tokens[9].toDoubleOrNull() ?: 0.0
+                        lon = tokens[10].toDoubleOrNull() ?: 0.0
+                        
+                        rxMainTs = tokens[12].toLongOrNull() ?: 0L
+                        rxPitotTs = tokens[13].toLongOrNull() ?: 0L
+                        rxRudderTs = tokens[14].toLongOrNull() ?: 0L
+                        rxGPSTs = tokens[15].toLongOrNull() ?: 0L
+                        rxAltTs = tokens[16].toLongOrNull() ?: 0L
+                        rxBridgeTs = tokens[17].toLongOrNull() ?: 0L
+                        
+                        // Treat old RX timestamps also as HB timestamps in fallback
+                        hbMainTs = rxMainTs
+                        hbPitotTs = rxPitotTs
+                        hbRudderTs = rxRudderTs
+                        hbGPSTs = rxGPSTs
+                        hbAltTs = rxAltTs
+                        hbSpeakerTs = rxBridgeTs
+                        currentMcuTime = rxMainTs
+                    }
+
+                    // Update top telemetry strip using Locale.US to avoid format bugs
+                    binding.tvBattery.text = String.format(Locale.US, "BAT: %.2fV", bat)
+                    binding.tvPressure.text = String.format(Locale.US, "BARO: %.1fhPa", press)
+                    binding.tvAltitude.text = String.format(Locale.US, "LALT: %.2fm", alt)
+                    binding.tvGPSSats.text = String.format(Locale.US, "GPS: %d Sat", sats)
+
+                    if (bat < 7.0f) {
+                        binding.tvBattery.setTextColor(ContextCompat.getColor(this@MainActivity, android.R.color.holo_red_light))
+                    } else {
+                        binding.tvBattery.setTextColor(ContextCompat.getColor(this@MainActivity, android.R.color.holo_green_light))
+                    }
+
+                    // Update dials
+                    binding.asiView.airspeed = airspeed
+                    binding.attView.pitch = pitch
+                    binding.attView.roll = roll
+                    binding.altView.altitude = alt
+                    binding.hdgView.heading = heading.toFloat()
+
+                    // Update GPS map
+                    if (lat != 0.0 && lon != 0.0) {
+                        val pos = LatLng(lat, lon)
+                        if (gliderMarker == null) {
+                            gliderMarker = googleMap?.addMarker(
+                                MarkerOptions()
+                                    .position(pos)
+                                    .title("Glider Position")
+                                    .icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_RED))
+                            )
+                            googleMap?.moveCamera(CameraUpdateFactory.newLatLngZoom(pos, 16f))
                         } else {
-                            binding.tvBattery.setTextColor(ContextCompat.getColor(this, android.R.color.holo_green_light))
-                        }
-
-                        // Update dials
-                        binding.asiView.airspeed = airspeed
-                        binding.attView.pitch = pitch
-                        binding.attView.roll = roll
-                        binding.altView.altitude = alt
-                        binding.hdgView.heading = heading.toFloat()
-
-                        // Update GPS map
-                        if (lat != 0.0 && lon != 0.0) {
-                            val pos = LatLng(lat, lon)
-                            if (gliderMarker == null) {
-                                gliderMarker = googleMap?.addMarker(
-                                    MarkerOptions()
-                                        .position(pos)
-                                        .title("Glider Position")
-                                        .icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_RED))
-                                )
-                                googleMap?.moveCamera(CameraUpdateFactory.newLatLngZoom(pos, 16f))
-                            } else {
-                                gliderMarker?.position = pos
-                            }
+                            gliderMarker?.position = pos
                         }
                     }
                 } catch (e: Exception) {
@@ -339,23 +404,28 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateNodeStatusIndicators() {
-        val refTime = nodeMainTs
+        val refTime = currentMcuTime
         
-        fun updateIndicator(tv: android.widget.TextView, ts: Long) {
-            // Active if updated within 1.5 seconds
-            if (refTime > 0 && refTime - ts < 1500) {
+        fun updateIndicator(tv: android.widget.TextView, hbTs: Long, rxTs: Long) {
+            val hbActive = (refTime > 0 && refTime - hbTs < 3000)
+            val rxActive = (refTime > 0 && refTime - rxTs < 3000)
+
+            if (rxActive) {
                 tv.setBackgroundColor(Color.parseColor("#10B981")) // Green (OK)
+            } else if (hbActive) {
+                tv.setBackgroundColor(Color.parseColor("#F59E0B")) // Orange (CONNECTED)
             } else {
                 tv.setBackgroundColor(Color.parseColor("#EF4444")) // Red (LOST)
             }
         }
 
-        updateIndicator(binding.tvNodeMain, nodeMainTs)
-        updateIndicator(binding.tvNodePitot, nodePitotTs)
-        updateIndicator(binding.tvNodeRudder, nodeRudderTs)
-        updateIndicator(binding.tvNodeGPS, nodeGPSTs)
-        updateIndicator(binding.tvNodeAltimeter, nodeAltTs)
-        updateIndicator(binding.tvNodeBridge, nodeBridgeTs)
+        updateIndicator(binding.tvNodeMain,      hbMainTs,     rxMainTs)
+        updateIndicator(binding.tvNodePitot,     hbPitotTs,    rxPitotTs)
+        updateIndicator(binding.tvNodeRudder,    hbRudderTs,   rxRudderTs)
+        updateIndicator(binding.tvNodeGPS,       hbGPSTs,      rxGPSTs)
+        updateIndicator(binding.tvNodeAltimeter, hbAltTs,      rxAltTs)
+        updateIndicator(binding.tvNodeBridge,    hbSpeakerTs,  rxBridgeTs)
+        updateIndicator(binding.tvNodeElevator,  hbElevatorTs, rxElevatorTs)
     }
 
     private fun sendCommand(cmd: String) {

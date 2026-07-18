@@ -59,9 +59,8 @@ void CANManager::end() {
 
 bool CANManager::transmitRaw(uint32_t id, const uint8_t* data, uint8_t dlc) {
     if (!_initialized) return false;
+    handleAutoRecovery();
 
-    // Check driver state. Fast-fail if NOT in running state.
-    // DO NOT trigger twai_initiate_recovery or twai_start here to prevent high-frequency driver conflicts.
     twai_status_info_t status;
     if (twai_get_status_info(&status) == ESP_OK) {
         if (status.state != TWAI_STATE_RUNNING) {
@@ -86,8 +85,8 @@ bool CANManager::transmitRaw(uint32_t id, const uint8_t* data, uint8_t dlc) {
 
 bool CANManager::receiveRaw(uint32_t& id, uint8_t* data, uint8_t& dlc, uint32_t timeoutMs) {
     if (!_initialized) return false;
+    handleAutoRecovery();
 
-    // Check driver state. Fast-fail if NOT in running state.
     twai_status_info_t status;
     if (twai_get_status_info(&status) == ESP_OK) {
         if (status.state != TWAI_STATE_RUNNING) {
@@ -133,6 +132,24 @@ void CANManager::printStatus() {
         if (status_info.rx_missed_count > 0) {
             Serial.printf("[CAN Warning] %u RX frames missed - consider increasing rx_queue_len.\n",
                           status_info.rx_missed_count);
+        }
+    }
+}
+
+void CANManager::handleAutoRecovery() {
+    if (!_initialized) return;
+    uint32_t now = millis();
+    if (now - _lastRecoveryAttemptMs < 200) return; // Shortened from 2000ms to 200ms for faster recovery
+    _lastRecoveryAttemptMs = now;
+
+    twai_status_info_t status_info;
+    if (twai_get_status_info(&status_info) == ESP_OK) {
+        if (status_info.state == TWAI_STATE_BUS_OFF) {
+            Serial.println("[CAN Warning] Bus-Off detected via auto-recovery! Recovering...");
+            twai_initiate_recovery();
+        } else if (status_info.state == TWAI_STATE_STOPPED) {
+            Serial.println("[CAN Warning] Stopped detected via auto-recovery! Restarting...");
+            twai_start();
         }
     }
 }
