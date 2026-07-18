@@ -145,4 +145,6 @@ void loop() {
         hbMsg.data[0] = NODE_ID_RUDDER;
         twai_transmit(&hbMsg, pdMS_TO_TICKS(10));
     }
+
+    delay(1); // Yield CPU to FreeRTOS scheduler to stabilize background task execution
 }

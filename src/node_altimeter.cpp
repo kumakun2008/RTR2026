@@ -153,8 +153,8 @@ void loop() {
         delayMicroseconds(50);  // URM37v5.0 spec: trigger pulse width must be at least 50us
         digitalWrite(URM_TRIG_PIN, HIGH);
 
-        long duration = pulseIn(URM_ECHO_PIN, LOW, 30000); // URM37v5.0 Echo pulse is active-LOW
-        if (duration > 0 && duration < 30000) {
+        long duration = pulseIn(URM_ECHO_PIN, LOW, 18000); // Timeout reduced to 18ms (~3m range) to reduce blocking
+        if (duration > 0 && duration < 18000) {
             float urm_mm = duration * 0.172f; // URM37v5.0 spec: 1us = 0.172mm
             uint16_t cm = (uint16_t)(urm_mm / 10.0f);
             ultrasoundDistance_cm = cm;
@@ -182,4 +182,6 @@ void loop() {
         uint8_t hbPayload = NODE_ID_ALT;
         canBus.transmitRaw(CAN_ID_HB_ALT, &hbPayload, 1);
     }
+
+    delay(1); // Yield CPU to FreeRTOS scheduler to prevent WDT reset loop & stabilize CAN/I2C
 }
