@@ -15,3 +15,5 @@ PitotCalibration/CSV/
 local.properties
 **/build/
 AndroidTelemetry/app/release/
+.vscode/c_cpp_properties.json
+.vscode/launch.json
