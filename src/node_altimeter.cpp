@@ -10,8 +10,8 @@
 #define OFFSET_CORRECTION 0
 
 // URM37v5.0 Ultrasonic Sensor
-#define URM_ECHO_PIN D1  // D1 (GPIO3)
-#define URM_TRIG_PIN D2  // D2 (GPIO4)
+constexpr int URM_TRIG_PIN = D2;
+constexpr int URM_ECHO_PIN = D1;
 
 // CAN GPIO Pins (GPIO20/21 に戻し、シリアル競合を避けるためSerialを完全無効化)
 #define CAN_TX_PIN 20
