@@ -10,8 +10,8 @@
 #define OFFSET_CORRECTION 0
 
 // URM37v5.0 Ultrasonic Sensor
-#define URM_ECHO_PIN 3  // D1 (GPIO3)
-#define URM_TRIG_PIN 4  // D2 (GPIO4)
+#define URM_ECHO_PIN D1  // D1 (GPIO3)
+#define URM_TRIG_PIN D2  // D2 (GPIO4)
 
 // CAN GPIO Pins (GPIO20/21 に戻し、シリアル競合を避けるためSerialを完全無効化)
 #define CAN_TX_PIN 20
@@ -86,7 +86,7 @@ void taskLidar(void* pvParameters) {
         while (Serial1.available() > 0) {
             uint8_t inByte = Serial1.read();
             processedAny = true;
-            
+
             if (!pktStarted) {
                 if (inByte == 0x5C) {
                     rxBuf[0] = inByte;
@@ -95,10 +95,10 @@ void taskLidar(void* pvParameters) {
                 }
             } else {
                 rxBuf[bufIdx++] = inByte;
-                
+
                 if (bufIdx >= 4) {
-                    pktStarted = false; 
-                    
+                    pktStarted = false;
+
                     uint8_t checksum = calculateChecksum(&rxBuf[1], 2);
                     if (checksum == rxBuf[3]) {
                         uint16_t rawDistance = (uint16_t)((rxBuf[2] << 8) | rxBuf[1]);
@@ -142,7 +142,7 @@ void taskUltrasonic(void* pvParameters) {
         digitalWrite(URM_TRIG_PIN, HIGH);
 
         // 2. Measure Echo Pulse duration using standard pulseIn (Active-LOW, 18ms max timeout)
-        long duration = pulseIn(URM_ECHO_PIN, LOW, 18000); 
+        long duration = pulseIn(URM_ECHO_PIN, LOW, 18000);
         if (duration > 0 && duration < 18000) {
             float urm_mm = (float)duration * 0.172f; // URM37v5.0 spec: 1us = 0.172mm
             uint16_t cm = (uint16_t)(urm_mm / 10.0f);
@@ -188,13 +188,13 @@ void taskCANTransmit(void* pvParameters) {
 
 void setup() {
     // Initialize TSD20 Lidar Serial at 460800 bps with expanded buffer (From altimeter.txt)
-    Serial1.setRxBufferSize(2048); 
+    Serial1.setRxBufferSize(2048);
     Serial1.begin(460800, SERIAL_8N1, TSD_RX, TSD_TX);
 
     // Initialize URM37v5.0 Pins
     pinMode(URM_TRIG_PIN, OUTPUT);
     digitalWrite(URM_TRIG_PIN, HIGH);
-    
+
     pinMode(URM_ECHO_PIN, INPUT_PULLUP); // Use pull-up for open-collector/noise immunity
 
     // Initialize I2C Slave at 0x30
